@@ -1,0 +1,167 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  HR_MANAGER
+  EMPLOYEE
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum EmploymentStatus {
+  ACTIVE
+  INACTIVE
+  ON_LEAVE
+  TERMINATED
+}
+
+enum LeaveType {
+  ANNUAL
+  SICK
+  MATERNITY
+  PATERNITY
+  UNPAID
+  OTHER
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  role         Role      @default(EMPLOYEE)
+  employee     Employee?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("users")
+}
+
+model Department {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  description String?
+  managerId   String?
+  manager     Employee?  @relation("DepartmentManager", fields: [managerId], references: [id])
+  employees   Employee[] @relation("DepartmentEmployees")
+  positions   Position[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@map("departments")
+}
+
+model Position {
+  id           String     @id @default(cuid())
+  title        String
+  description  String?
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+  employees    Employee[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@map("positions")
+}
+
+model Employee {
+  id               String           @id @default(cuid())
+  employeeCode     String           @unique
+  firstName        String
+  lastName         String
+  email            String           @unique
+  phone            String?
+  gender           Gender?
+  dateOfBirth      DateTime?
+  hireDate         DateTime         @default(now())
+  salary           Decimal          @db.Decimal(12, 2)
+  status           EmploymentStatus @default(ACTIVE)
+  userId           String?          @unique
+  user             User?            @relation(fields: [userId], references: [id])
+  departmentId     String?
+  department       Department?      @relation("DepartmentEmployees", fields: [departmentId], references: [id])
+  managedDept      Department?      @relation("DepartmentManager")
+  positionId       String?
+  position         Position?        @relation(fields: [positionId], references: [id])
+  managerId        String?
+  manager          Employee?        @relation("EmployeeManager", fields: [managerId], references: [id])
+  subordinates     Employee[]       @relation("EmployeeManager")
+  leaveRequests    LeaveRequest[]
+  leaveBalances    LeaveBalance[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@map("employees")
+}
+
+model LeavePolicy {
+  id            String         @id @default(cuid())
+  name          String         @unique
+  leaveType     LeaveType
+  daysPerYear   Int
+  carryForward  Boolean        @default(false)
+  maxCarryDays  Int            @default(0)
+  description   String?
+  leaveBalances LeaveBalance[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@map("leave_policies")
+}
+
+model LeaveBalance {
+  id            String      @id @default(cuid())
+  employeeId    String
+  employee      Employee    @relation(fields: [employeeId], references: [id])
+  policyId      String
+  policy        LeavePolicy @relation(fields: [policyId], references: [id])
+  year          Int
+  totalDays     Int
+  usedDays      Int         @default(0)
+  remainingDays Int
+
+  @@unique([employeeId, policyId, year])
+  @@map("leave_balances")
+}
+
+model LeaveRequest {
+  id          String      @id @default(cuid())
+  employeeId  String
+  employee    Employee    @relation(fields: [employeeId], references: [id])
+  leaveType   LeaveType
+  startDate   DateTime
+  endDate     DateTime
+  totalDays   Int
+  reason      String?
+  status      LeaveStatus @default(PENDING)
+  reviewedBy  String?
+  reviewNote  String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@map("leave_requests")
+}
