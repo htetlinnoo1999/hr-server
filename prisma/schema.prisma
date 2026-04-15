@@ -49,29 +49,51 @@ enum LeaveStatus {
 
 // ─── Models ───────────────────────────────────────────────────────────────────
 
+model Organization {
+  id             String     @id @default(cuid())
+  name           String     @unique
+  slug           String     @unique
+  primaryColor   String?
+  secondaryColor String?
+  logo           String?
+  isDefault      Boolean    @default(false)
+  users          User[]
+  employees      Employee[]
+  departments    Department[]
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@map("organizations")
+}
+
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String
-  role         Role      @default(EMPLOYEE)
-  employee     Employee?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id             String        @id @default(cuid())
+  email          String        @unique
+  passwordHash   String
+  role           Role          @default(EMPLOYEE)
+  employee       Employee?
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   @@map("users")
 }
 
 model Department {
-  id          String     @id @default(cuid())
-  name        String     @unique
-  description String?
-  managerId   String?
-  manager     Employee?  @relation("DepartmentManager", fields: [managerId], references: [id])
-  employees   Employee[] @relation("DepartmentEmployees")
-  positions   Position[]
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id             String        @id @default(cuid())
+  name           String
+  description    String?
+  managerId      String?       @unique
+  manager        Employee?     @relation("DepartmentManager", fields: [managerId], references: [id])
+  employees      Employee[]    @relation("DepartmentEmployees")
+  positions      Position[]
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
+  @@unique([name, organizationId])
   @@map("departments")
 }
 
@@ -112,6 +134,8 @@ model Employee {
   subordinates     Employee[]       @relation("EmployeeManager")
   leaveRequests    LeaveRequest[]
   leaveBalances    LeaveBalance[]
+  organizationId   String?
+  organization     Organization?    @relation(fields: [organizationId], references: [id])
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 
