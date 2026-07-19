@@ -31,6 +31,14 @@ enum EmploymentStatus {
   TERMINATED
 }
 
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACTOR
+  INTERN
+  TEMPORARY
+}
+
 enum LeaveType {
   ANNUAL
   SICK
@@ -45,6 +53,25 @@ enum LeaveStatus {
   APPROVED
   REJECTED
   CANCELLED
+}
+
+enum IdentificationType {
+  NRC
+  PASSPORT
+}
+
+enum ContractType {
+  PERMANENT
+  FIXED_TERM
+  PROBATION
+  INTERNSHIP
+  CONTRACTOR
+}
+
+enum ContractStatus {
+  ACTIVE
+  EXPIRED
+  TERMINATED
 }
 
 // ─── Models ───────────────────────────────────────────────────────────────────
@@ -88,8 +115,8 @@ model Department {
   manager        Employee?     @relation("DepartmentManager", fields: [managerId], references: [id])
   employees      Employee[]    @relation("DepartmentEmployees")
   positions      Position[]
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id])
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -111,35 +138,68 @@ model Position {
 }
 
 model Employee {
-  id               String           @id @default(cuid())
-  employeeCode     String           @unique
-  firstName        String
-  lastName         String
-  email            String           @unique
-  phone            String?
-  gender           Gender?
-  dateOfBirth      DateTime?
-  hireDate         DateTime         @default(now())
-  salary           Decimal          @db.Decimal(12, 2)
-  status           EmploymentStatus @default(ACTIVE)
-  userId           String?          @unique
-  user             User?            @relation(fields: [userId], references: [id])
-  departmentId     String?
-  department       Department?      @relation("DepartmentEmployees", fields: [departmentId], references: [id])
-  managedDept      Department?      @relation("DepartmentManager")
-  positionId       String?
-  position         Position?        @relation(fields: [positionId], references: [id])
-  managerId        String?
-  manager          Employee?        @relation("EmployeeManager", fields: [managerId], references: [id])
-  subordinates     Employee[]       @relation("EmployeeManager")
-  leaveRequests    LeaveRequest[]
-  leaveBalances    LeaveBalance[]
-  organizationId   String?
-  organization     Organization?    @relation(fields: [organizationId], references: [id])
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+  id                    String              @id @default(cuid())
+  employeeCode          String              @unique
+  firstName             String
+  lastName              String
+  email                 String              @unique
+  phone                 String?
+  gender                Gender?
+  dateOfBirth           DateTime?
+  nationality           String?
+  identificationType    IdentificationType?
+  identificationNumber  String?             @unique
+  hireDate              DateTime            @default(now())
+  salary                Decimal             @db.Decimal(12, 2)
+  status                EmploymentStatus    @default(ACTIVE)
+  employmentType        EmploymentType      @default(FULL_TIME)
+  userId                String?             @unique
+  user                  User?               @relation(fields: [userId], references: [id])
+  departmentId          String?
+  department            Department?         @relation("DepartmentEmployees", fields: [departmentId], references: [id])
+  managedDept           Department?         @relation("DepartmentManager")
+  positionId            String?
+  position              Position?           @relation(fields: [positionId], references: [id])
+  managerId             String?
+  manager               Employee?           @relation("EmployeeManager", fields: [managerId], references: [id])
+  subordinates          Employee[]          @relation("EmployeeManager")
+  leaveRequests         LeaveRequest[]
+  leaveBalances         LeaveBalance[]
+  contracts             EmployeeContract[]
+  documents             EmployeeDocument[]
+  organizationId        String
+  organization          Organization        @relation(fields: [organizationId], references: [id])
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
 
   @@map("employees")
+}
+
+model EmployeeContract {
+  id           String         @id @default(cuid())
+  employeeId   String
+  employee     Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  contractType ContractType
+  startDate    DateTime
+  endDate      DateTime?
+  fileUrl      String?
+  status       ContractStatus @default(ACTIVE)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@map("employee_contracts")
+}
+
+model EmployeeDocument {
+  id           String   @id @default(cuid())
+  employeeId   String
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  documentType String
+  fileUrl      String
+  description  String?
+  uploadedAt   DateTime @default(now())
+
+  @@map("employee_documents")
 }
 
 model LeavePolicy {
@@ -160,7 +220,7 @@ model LeavePolicy {
 model LeaveBalance {
   id            String      @id @default(cuid())
   employeeId    String
-  employee      Employee    @relation(fields: [employeeId], references: [id])
+  employee      Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   policyId      String
   policy        LeavePolicy @relation(fields: [policyId], references: [id])
   year          Int
@@ -175,7 +235,7 @@ model LeaveBalance {
 model LeaveRequest {
   id          String      @id @default(cuid())
   employeeId  String
-  employee    Employee    @relation(fields: [employeeId], references: [id])
+  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   leaveType   LeaveType
   startDate   DateTime
   endDate     DateTime

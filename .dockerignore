@@ -1,0 +1,17 @@
+node_modules
+dist
+generated
+coverage
+.git
+.gitignore
+.env
+.env.*
+.dockerignore
+Dockerfile
+docker-compose*.yml
+.claude
+.claude-flow
+.swarm
+*.md
+npm-debug.log*
+.DS_Store

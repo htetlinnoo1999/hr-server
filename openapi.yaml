@@ -1,0 +1,962 @@
+openapi: 3.0.0
+paths:
+  /:
+    get:
+      operationId: AppController_getHello
+      parameters: []
+      responses:
+        '200':
+          description: ''
+      tags:
+        - App
+  /organizations:
+    post:
+      operationId: OrganizationController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrganizationDto'
+      responses:
+        '201':
+          description: Organization created successfully
+        '403':
+          description: Admin role required
+        '409':
+          description: Organization with this name or slug already exists
+      security:
+        - bearer: []
+      summary: Create a new organization (admin only)
+      tags:
+        - Organizations
+    get:
+      operationId: OrganizationController_findAll
+      parameters: []
+      responses:
+        '200':
+          description: Array of all organizations
+        '403':
+          description: Admin role required
+      security:
+        - bearer: []
+      summary: List all organizations (admin only)
+      tags:
+        - Organizations
+  /organizations/{id}:
+    get:
+      operationId: OrganizationController_findOne
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Organization ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Organization details
+        '404':
+          description: Organization not found
+      security:
+        - bearer: []
+      summary: Get an organization by ID (must be the caller's own org, unless admin)
+      tags:
+        - Organizations
+    patch:
+      operationId: OrganizationController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Organization ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOrganizationDto'
+      responses:
+        '200':
+          description: Updated organization
+        '403':
+          description: Only an admin can change the default organization
+        '404':
+          description: Organization not found
+        '409':
+          description: Name or slug conflict
+      security:
+        - bearer: []
+      summary: Update an organization (must be the caller's own org, unless admin)
+      tags:
+        - Organizations
+    delete:
+      operationId: OrganizationController_remove
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Organization ID
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Organization deleted
+        '403':
+          description: Admin role required
+        '404':
+          description: Organization not found
+        '409':
+          description: Cannot delete organization with existing employees
+      security:
+        - bearer: []
+      summary: Delete an organization (admin only)
+      tags:
+        - Organizations
+  /organizations/slug/{slug}:
+    get:
+      operationId: OrganizationController_findBySlug
+      parameters:
+        - name: slug
+          required: true
+          in: path
+          description: Organization slug (e.g. "peoplify")
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Organization details
+        '404':
+          description: Organization not found
+      security:
+        - bearer: []
+      summary: Get an organization by slug (must be the caller's own org, unless admin)
+      tags:
+        - Organizations
+  /organizations/{id}/branding:
+    get:
+      description: >-
+        Returns the organization branding. Missing colors/logo fall back to the
+        default (Peoplify) organization values.
+      operationId: OrganizationController_getEffectiveBranding
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Organization ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Effective branding details
+        '404':
+          description: Organization not found
+      security:
+        - bearer: []
+      summary: Get effective branding for an organization
+      tags:
+        - Organizations
+  /departments:
+    post:
+      operationId: DepartmentController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDepartmentDto'
+      responses:
+        '201':
+          description: Department created successfully
+        '403':
+          description: Cannot create a department outside your organization
+        '404':
+          description: Organization not found
+        '409':
+          description: A department with this name already exists
+      security:
+        - bearer: []
+      summary: Create a new department
+      tags:
+        - Departments
+    get:
+      operationId: DepartmentController_findAll
+      parameters:
+        - name: organizationId
+          required: false
+          in: query
+          description: >-
+            Filter by organization ID (admin only; other roles are always scoped
+            to their own org)
+          schema: {}
+      responses:
+        '200':
+          description: Array of departments
+      security:
+        - bearer: []
+      summary: List departments within the caller's organization
+      tags:
+        - Departments
+  /departments/{id}:
+    get:
+      operationId: DepartmentController_findOne
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Department ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Department details
+        '404':
+          description: Department not found
+      security:
+        - bearer: []
+      summary: Get a department by ID
+      tags:
+        - Departments
+    patch:
+      operationId: DepartmentController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Department ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDepartmentDto'
+      responses:
+        '200':
+          description: Updated department
+        '403':
+          description: Cannot move a department to a different organization
+        '404':
+          description: Department not found
+        '409':
+          description: Name conflict or manager already assigned elsewhere
+      security:
+        - bearer: []
+      summary: Update a department
+      tags:
+        - Departments
+    delete:
+      operationId: DepartmentController_remove
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Department ID
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Department deleted
+        '404':
+          description: Department not found
+        '409':
+          description: Department still has employees or positions assigned
+      security:
+        - bearer: []
+      summary: Delete a department
+      tags:
+        - Departments
+  /employees:
+    post:
+      operationId: EmployeeController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEmployeeDto'
+      responses:
+        '201':
+          description: Employee created successfully
+        '403':
+          description: Cannot create an employee outside your organization
+        '404':
+          description: Organization not found
+        '409':
+          description: >-
+            Employee with this code, email, or identification number already
+            exists
+      security:
+        - bearer: []
+      summary: Create a new employee
+      tags:
+        - Employees
+    get:
+      operationId: EmployeeController_findAll
+      parameters:
+        - name: organizationId
+          required: false
+          in: query
+          description: >-
+            Filter by organization ID (admin only; other roles are always scoped
+            to their own org)
+          schema: {}
+      responses:
+        '200':
+          description: Array of employees
+      security:
+        - bearer: []
+      summary: List employees within the caller's organization
+      tags:
+        - Employees
+  /employees/{id}:
+    get:
+      operationId: EmployeeController_findOne
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Employee ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Employee details
+        '404':
+          description: Employee not found
+      security:
+        - bearer: []
+      summary: Get an employee by ID
+      tags:
+        - Employees
+    patch:
+      operationId: EmployeeController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Employee ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEmployeeDto'
+      responses:
+        '200':
+          description: Updated employee
+        '403':
+          description: Cannot move an employee to a different organization
+        '404':
+          description: Employee not found
+        '409':
+          description: Code, email, or identification number conflict
+      security:
+        - bearer: []
+      summary: Update an employee
+      tags:
+        - Employees
+    delete:
+      operationId: EmployeeController_remove
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Employee ID
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Employee deleted
+        '404':
+          description: Employee not found
+        '409':
+          description: Only inactive employees can be deleted
+      security:
+        - bearer: []
+      summary: Delete an employee (must be INACTIVE)
+      tags:
+        - Employees
+  /employees/{id}/contracts:
+    post:
+      operationId: EmployeeController_addContract
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Employee ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEmployeeContractDto'
+      responses:
+        '201':
+          description: Contract created
+        '404':
+          description: Employee not found
+      security:
+        - bearer: []
+      summary: Add a contract for an employee
+      tags:
+        - Employees
+    get:
+      operationId: EmployeeController_listContracts
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Employee ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Array of contracts
+        '404':
+          description: Employee not found
+      security:
+        - bearer: []
+      summary: List an employee's contracts
+      tags:
+        - Employees
+  /employees/{id}/documents:
+    post:
+      operationId: EmployeeController_addDocument
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Employee ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEmployeeDocumentDto'
+      responses:
+        '201':
+          description: Document created
+        '404':
+          description: Employee not found
+      security:
+        - bearer: []
+      summary: Add a document for an employee
+      tags:
+        - Employees
+    get:
+      operationId: EmployeeController_listDocuments
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Employee ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Array of documents
+        '404':
+          description: Employee not found
+      security:
+        - bearer: []
+      summary: List an employee's additional documents
+      tags:
+        - Employees
+  /leave-requests:
+    post:
+      operationId: LeaveRequestController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLeaveRequestDto'
+      responses:
+        '201':
+          description: 'Leave request created (status: PENDING)'
+        '400':
+          description: endDate is before startDate
+        '404':
+          description: Employee not found
+      security:
+        - bearer: []
+      summary: Submit a leave request
+      tags:
+        - Leave Requests
+    get:
+      operationId: LeaveRequestController_findAll
+      parameters:
+        - name: status
+          required: false
+          in: query
+          description: Filter by status
+          schema:
+            enum:
+              - PENDING
+              - APPROVED
+              - REJECTED
+              - CANCELLED
+            type: string
+        - name: employeeId
+          required: false
+          in: query
+          description: Filter by employee ID
+          schema: {}
+      responses:
+        '200':
+          description: Array of leave requests
+      security:
+        - bearer: []
+      summary: >-
+        List leave requests within the caller's organization, optionally
+        filtered
+      tags:
+        - Leave Requests
+  /leave-requests/{id}:
+    get:
+      operationId: LeaveRequestController_findOne
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Leave request ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Leave request details
+        '404':
+          description: Leave request not found
+      security:
+        - bearer: []
+      summary: Get a leave request by ID
+      tags:
+        - Leave Requests
+  /leave-requests/{id}/cancel:
+    patch:
+      operationId: LeaveRequestController_cancel
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Leave request ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Leave request cancelled
+        '404':
+          description: Leave request not found
+        '409':
+          description: Only pending leave requests can be cancelled
+      security:
+        - bearer: []
+      summary: Cancel a pending leave request
+      tags:
+        - Leave Requests
+  /auth/login:
+    post:
+      operationId: AuthController_login
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginDto'
+      responses:
+        '200':
+          description: JWT access token and authenticated user info
+        '401':
+          description: Invalid credentials
+      summary: Log in with email and password
+      tags:
+        - Auth
+info:
+  title: Peoplify API
+  description: HR management platform API
+  version: '1.0'
+  contact: {}
+tags: []
+servers: []
+components:
+  securitySchemes:
+    bearer:
+      scheme: bearer
+      bearerFormat: JWT
+      type: http
+  schemas:
+    CreateOrganizationDto:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Peoplify
+          description: Organization display name
+        slug:
+          type: string
+          example: peoplify
+          description: URL-friendly unique identifier
+        primaryColor:
+          type: string
+          example: '#4F46E5'
+          description: Primary brand color (hex)
+        secondaryColor:
+          type: string
+          example: '#818CF8'
+          description: Secondary brand color (hex)
+        logo:
+          type: string
+          example: https://example.com/logo.png
+          description: Logo URL
+        isDefault:
+          type: boolean
+          default: false
+          description: Mark as the default (root) organization
+      required:
+        - name
+        - slug
+    UpdateOrganizationDto:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Peoplify
+          description: Organization display name
+        slug:
+          type: string
+          example: peoplify
+          description: URL-friendly unique identifier
+        primaryColor:
+          type: string
+          example: '#4F46E5'
+          description: Primary brand color (hex)
+        secondaryColor:
+          type: string
+          example: '#818CF8'
+          description: Secondary brand color (hex)
+        logo:
+          type: string
+          example: https://example.com/logo.png
+          description: Logo URL
+        isDefault:
+          type: boolean
+          default: false
+          description: Mark as the default (root) organization
+    CreateDepartmentDto:
+      type: object
+      properties:
+        organizationId:
+          type: string
+          description: Organization this department belongs to
+        name:
+          type: string
+          example: Engineering
+        description:
+          type: string
+          example: Builds and maintains the product
+        managerId:
+          type: string
+          description: >-
+            Employee ID of the department manager. Must belong to the same
+            organization and cannot already manage another department.
+      required:
+        - organizationId
+        - name
+    UpdateDepartmentDto:
+      type: object
+      properties:
+        organizationId:
+          type: string
+          description: Organization this department belongs to
+        name:
+          type: string
+          example: Engineering
+        description:
+          type: string
+          example: Builds and maintains the product
+        managerId:
+          type: string
+          description: >-
+            Employee ID of the department manager. Must belong to the same
+            organization and cannot already manage another department.
+    CreateEmployeeDto:
+      type: object
+      properties:
+        organizationId:
+          type: string
+          description: Organization this employee belongs to
+        employeeCode:
+          type: string
+          example: EMP-0001
+          description: Unique employee code
+        firstName:
+          type: string
+          example: Jane
+        lastName:
+          type: string
+          example: Doe
+        email:
+          type: string
+          example: jane.doe@example.com
+        phone:
+          type: string
+          example: '+95912345678'
+        gender:
+          type: string
+          enum:
+            - MALE
+            - FEMALE
+            - OTHER
+        dateOfBirth:
+          type: string
+          example: '1995-06-15'
+          description: Date of birth (ISO 8601)
+        nationality:
+          type: string
+          example: Myanmar
+        identificationType:
+          type: string
+          enum:
+            - NRC
+            - PASSPORT
+          description: Type of identification document
+        identificationNumber:
+          type: string
+          example: 12/YAKANA(N)123456
+          description: NRC or passport number
+        hireDate:
+          type: string
+          example: '2024-01-15'
+          description: Hire date (ISO 8601), defaults to now
+        salary:
+          type: number
+          example: 1500000
+          description: Monthly salary
+        status:
+          type: string
+          enum:
+            - ACTIVE
+            - INACTIVE
+            - ON_LEAVE
+            - TERMINATED
+          default: ACTIVE
+        employmentType:
+          type: string
+          enum:
+            - FULL_TIME
+            - PART_TIME
+            - CONTRACTOR
+            - INTERN
+            - TEMPORARY
+          default: FULL_TIME
+        departmentId:
+          type: string
+          description: Department ID
+        positionId:
+          type: string
+          description: Position ID
+        managerId:
+          type: string
+          description: >-
+            Direct report to — the ID of the employee they report to. Must
+            belong to the same organization.
+        userId:
+          type: string
+          description: Linked User account ID
+      required:
+        - organizationId
+        - employeeCode
+        - firstName
+        - lastName
+        - email
+        - salary
+    UpdateEmployeeDto:
+      type: object
+      properties:
+        organizationId:
+          type: string
+          description: Organization this employee belongs to
+        employeeCode:
+          type: string
+          example: EMP-0001
+          description: Unique employee code
+        firstName:
+          type: string
+          example: Jane
+        lastName:
+          type: string
+          example: Doe
+        email:
+          type: string
+          example: jane.doe@example.com
+        phone:
+          type: string
+          example: '+95912345678'
+        gender:
+          type: string
+          enum:
+            - MALE
+            - FEMALE
+            - OTHER
+        dateOfBirth:
+          type: string
+          example: '1995-06-15'
+          description: Date of birth (ISO 8601)
+        nationality:
+          type: string
+          example: Myanmar
+        identificationType:
+          type: string
+          enum:
+            - NRC
+            - PASSPORT
+          description: Type of identification document
+        identificationNumber:
+          type: string
+          example: 12/YAKANA(N)123456
+          description: NRC or passport number
+        hireDate:
+          type: string
+          example: '2024-01-15'
+          description: Hire date (ISO 8601), defaults to now
+        salary:
+          type: number
+          example: 1500000
+          description: Monthly salary
+        status:
+          type: string
+          enum:
+            - ACTIVE
+            - INACTIVE
+            - ON_LEAVE
+            - TERMINATED
+          default: ACTIVE
+        employmentType:
+          type: string
+          enum:
+            - FULL_TIME
+            - PART_TIME
+            - CONTRACTOR
+            - INTERN
+            - TEMPORARY
+          default: FULL_TIME
+        departmentId:
+          type: string
+          description: Department ID
+        positionId:
+          type: string
+          description: Position ID
+        managerId:
+          type: string
+          description: >-
+            Direct report to — the ID of the employee they report to. Must
+            belong to the same organization.
+        userId:
+          type: string
+          description: Linked User account ID
+    CreateEmployeeContractDto:
+      type: object
+      properties:
+        contractType:
+          type: string
+          enum:
+            - PERMANENT
+            - FIXED_TERM
+            - PROBATION
+            - INTERNSHIP
+            - CONTRACTOR
+        startDate:
+          type: string
+          example: '2024-01-15'
+          description: Contract start date (ISO 8601)
+        endDate:
+          type: string
+          example: '2025-01-14'
+          description: Contract end date (ISO 8601)
+        fileUrl:
+          type: string
+          example: https://example.com/contracts/emp-0001.pdf
+        status:
+          type: string
+          enum:
+            - ACTIVE
+            - EXPIRED
+            - TERMINATED
+          default: ACTIVE
+      required:
+        - contractType
+        - startDate
+    CreateEmployeeDocumentDto:
+      type: object
+      properties:
+        documentType:
+          type: string
+          example: Educational Certificate
+          description: Type/category of the document
+        fileUrl:
+          type: string
+          example: https://example.com/docs/emp-0001-certificate.pdf
+        description:
+          type: string
+          example: Bachelor degree certificate
+      required:
+        - documentType
+        - fileUrl
+    CreateLeaveRequestDto:
+      type: object
+      properties:
+        employeeId:
+          type: string
+          description: Employee requesting leave
+        leaveType:
+          type: string
+          enum:
+            - ANNUAL
+            - SICK
+            - MATERNITY
+            - PATERNITY
+            - UNPAID
+            - OTHER
+        startDate:
+          type: string
+          example: '2026-08-01'
+          description: First day of leave (ISO 8601)
+        endDate:
+          type: string
+          example: '2026-08-03'
+          description: Last day of leave (ISO 8601, inclusive)
+        reason:
+          type: string
+          example: Family vacation
+      required:
+        - employeeId
+        - leaveType
+        - startDate
+        - endDate
+    LoginDto:
+      type: object
+      properties:
+        email:
+          type: string
+          example: htetlinnoo19@gmail.com
+        password:
+          type: string
+          example: asdf1234
+      required:
+        - email
+        - password
