@@ -5,6 +5,7 @@ import {
   Patch,
   Body,
   Param,
+  ParseEnumPipe,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -20,10 +21,14 @@ import {
 } from '@nestjs/swagger';
 import { LeaveRequestService } from './leave-request.service.ts';
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto.ts';
+import { ReviewLeaveRequestDto } from './dto/review-leave-request.dto.ts';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto.ts';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.ts';
+import { RolesGuard } from '../auth/guards/roles.guard.ts';
+import { Roles } from '../auth/decorators/roles.decorator.ts';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.ts';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface.ts';
-import { LeaveStatus } from '../../generated/prisma/enums.js';
+import { LeaveStatus, Role } from '../../generated/prisma/enums.js';
 
 @ApiTags('Leave Requests')
 @ApiBearerAuth()
@@ -62,13 +67,24 @@ export class LeaveRequestController {
     enum: LeaveStatus,
     description: 'Filter by status',
   })
-  @ApiOkResponse({ description: 'Array of leave requests' })
+  @ApiOkResponse({
+    description:
+      'Paginated list of leave requests: { data, total, page, limit }',
+  })
   findAll(
     @Query('employeeId') employeeId: string | undefined,
-    @Query('status') status: LeaveStatus | undefined,
+    @Query('status', new ParseEnumPipe(LeaveStatus, { optional: true }))
+    status: LeaveStatus | undefined,
+    @Query() { page, limit }: PaginationQueryDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.leaveRequestService.findAll(user, employeeId, status);
+    return this.leaveRequestService.findAll(
+      user,
+      employeeId,
+      status,
+      page,
+      limit,
+    );
   }
 
   @Get(':id')
@@ -91,5 +107,44 @@ export class LeaveRequestController {
   })
   cancel(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.leaveRequestService.cancel(id, user);
+  }
+
+  @Patch(':id/approve')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  @ApiOperation({ summary: 'Approve a pending leave request (admin/HR only)' })
+  @ApiParam({ name: 'id', description: 'Leave request ID' })
+  @ApiOkResponse({ description: 'Leave request approved' })
+  @ApiResponse({ status: 404, description: 'Leave request not found' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Only pending requests can be approved, or insufficient leave balance',
+  })
+  approve(
+    @Param('id') id: string,
+    @Body() dto: ReviewLeaveRequestDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.leaveRequestService.approve(id, dto, user);
+  }
+
+  @Patch(':id/reject')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  @ApiOperation({ summary: 'Reject a pending leave request (admin/HR only)' })
+  @ApiParam({ name: 'id', description: 'Leave request ID' })
+  @ApiOkResponse({ description: 'Leave request rejected' })
+  @ApiResponse({ status: 404, description: 'Leave request not found' })
+  @ApiResponse({
+    status: 409,
+    description: 'Only pending requests can be rejected',
+  })
+  reject(
+    @Param('id') id: string,
+    @Body() dto: ReviewLeaveRequestDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.leaveRequestService.reject(id, dto, user);
   }
 }

@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -23,6 +24,7 @@ import {
 import { OrganizationService } from './organization.service.ts';
 import { CreateOrganizationDto } from './dto/create-organization.dto.ts';
 import { UpdateOrganizationDto } from './dto/update-organization.dto.ts';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto.ts';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.ts';
 import { RolesGuard } from '../auth/guards/roles.guard.ts';
 import { Roles } from '../auth/decorators/roles.decorator.ts';
@@ -55,10 +57,13 @@ export class OrganizationController {
   @UseGuards(RolesGuard)
   @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'List all organizations (admin only)' })
-  @ApiOkResponse({ description: 'Array of all organizations' })
+  @ApiOkResponse({
+    description:
+      'Paginated list of organizations: { data, total, page, limit }',
+  })
   @ApiResponse({ status: 403, description: 'Admin role required' })
-  findAll() {
-    return this.organizationService.findAll();
+  findAll(@Query() { page, limit }: PaginationQueryDto) {
+    return this.organizationService.findAll(page, limit);
   }
 
   @Get(':id')

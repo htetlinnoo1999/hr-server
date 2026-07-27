@@ -46,14 +46,23 @@ describe('DepartmentController', () => {
   });
 
   describe('findAll', () => {
-    it('delegates to service.findAll with the current user and organizationId query param', async () => {
-      const departments = [{ id: '1' }, { id: '2' }];
-      mockService.findAll.mockResolvedValue(departments);
+    it('delegates to service.findAll with the current user, organizationId, and pagination', async () => {
+      const paginated = {
+        data: [{ id: '1' }, { id: '2' }],
+        total: 2,
+        page: 1,
+        limit: 20,
+      };
+      mockService.findAll.mockResolvedValue(paginated);
 
-      const result = await controller.findAll('org1', user as any);
+      const result = await controller.findAll(
+        'org1',
+        { page: 1, limit: 20 },
+        user as any,
+      );
 
-      expect(mockService.findAll).toHaveBeenCalledWith(user, 'org1');
-      expect(result).toEqual(departments);
+      expect(mockService.findAll).toHaveBeenCalledWith(user, 'org1', 1, 20);
+      expect(result).toEqual(paginated);
     });
   });
 

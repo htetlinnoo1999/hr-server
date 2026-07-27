@@ -1,15 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsEnum, IsDateString, IsOptional } from 'class-validator';
-import { LeaveType } from '../../../generated/prisma/enums.js';
+import { IsString, IsDateString, IsOptional } from 'class-validator';
 
 export class CreateLeaveRequestDto {
   @ApiProperty({ description: 'Employee requesting leave' })
   @IsString()
   employeeId: string;
 
-  @ApiProperty({ enum: LeaveType })
-  @IsEnum(LeaveType)
-  leaveType: LeaveType;
+  @ApiProperty({ description: 'Leave type this request is for' })
+  @IsString()
+  leaveTypeId: string;
 
   @ApiProperty({
     example: '2026-08-01',

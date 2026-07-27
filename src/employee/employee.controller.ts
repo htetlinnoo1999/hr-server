@@ -8,15 +8,19 @@ import {
   Param,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiParam,
   ApiQuery,
+  ApiConsumes,
   ApiCreatedResponse,
   ApiOkResponse,
   ApiNoContentResponse,
@@ -27,6 +31,8 @@ import { CreateEmployeeDto } from './dto/create-employee.dto.ts';
 import { UpdateEmployeeDto } from './dto/update-employee.dto.ts';
 import { CreateEmployeeContractDto } from './dto/create-employee-contract.dto.ts';
 import { CreateEmployeeDocumentDto } from './dto/create-employee-document.dto.ts';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto.ts';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto.ts';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.ts';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.ts';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface.ts';
@@ -40,7 +46,10 @@ export class EmployeeController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new employee' })
-  @ApiCreatedResponse({ description: 'Employee created successfully' })
+  @ApiCreatedResponse({
+    description:
+      'Employee created successfully. The response includes a one-time `temporaryPassword` for the new login — it is never shown again.',
+  })
   @ApiResponse({
     status: 403,
     description: 'Cannot create an employee outside your organization',
@@ -66,21 +75,62 @@ export class EmployeeController {
     description:
       'Filter by organization ID (admin only; other roles are always scoped to their own org)',
   })
-  @ApiOkResponse({ description: 'Array of employees' })
+  @ApiOkResponse({
+    description:
+      'Paginated list of employees: { data, total, page, limit }. Each employee omits phone, address, bankAccountNumber, and salary — fetch a single employee for those fields.',
+  })
   findAll(
     @Query('organizationId') organizationId: string | undefined,
+    @Query() { page, limit }: PaginationQueryDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.employeeService.findAll(user, organizationId);
+    return this.employeeService.findAll(user, organizationId, page, limit);
+  }
+
+  @Get('options')
+  @ApiOperation({
+    summary:
+      "List the caller's organization employees as { id, name } pairs, for dropdown use",
+  })
+  @ApiOkResponse({ description: 'Array of { id, name }, unpaginated' })
+  findOptions(@CurrentUser() user: AuthenticatedUser) {
+    return this.employeeService.listOptions(user);
+  }
+
+  @Patch('me')
+  @UseInterceptors(
+    FileInterceptor('profilePicture', {
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (_req, file, callback) => {
+        callback(null, /^image\/(jpeg|png|webp)$/.test(file.mimetype));
+      },
+    }),
+  )
+  @ApiOperation({ summary: "Update the caller's own nickname / profile picture" })
+  @ApiConsumes('multipart/form-data')
+  @ApiOkResponse({ description: 'Updated employee' })
+  @ApiResponse({
+    status: 404,
+    description: 'No employee profile linked to this account',
+  })
+  updateMyProfile(
+    @Body() dto: UpdateMyProfileDto,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.employeeService.updateOwnProfile(user, dto, file);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get an employee by ID' })
   @ApiParam({ name: 'id', description: 'Employee ID' })
-  @ApiOkResponse({ description: 'Employee details' })
+  @ApiOkResponse({
+    description:
+      "Employee details, including their organization, this year's leave balances (days used/remaining per leave type), and their 5 most recent approved leave requests.",
+  })
   @ApiResponse({ status: 404, description: 'Employee not found' })
   findOne(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.employeeService.findOne(id, user);
+    return this.employeeService.getProfile(id, user);
   }
 
   @Patch(':id')

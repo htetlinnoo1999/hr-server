@@ -39,15 +39,6 @@ enum EmploymentType {
   TEMPORARY
 }
 
-enum LeaveType {
-  ANNUAL
-  SICK
-  MATERNITY
-  PATERNITY
-  UNPAID
-  OTHER
-}
-
 enum LeaveStatus {
   PENDING
   APPROVED
@@ -77,100 +68,92 @@ enum ContractStatus {
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model Organization {
-  id             String     @id @default(cuid())
-  name           String     @unique
-  slug           String     @unique
+  id             String       @id @default(cuid())
+  name           String       @unique
+  slug           String       @unique
   primaryColor   String?
   secondaryColor String?
   logo           String?
-  isDefault      Boolean    @default(false)
-  users          User[]
+  isDefault      Boolean      @default(false)
+  unlimitedLeave Boolean      @default(false)
   employees      Employee[]
   departments    Department[]
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  leaveTypes     LeaveType[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   @@map("organizations")
 }
 
-model User {
-  id             String        @id @default(cuid())
-  email          String        @unique
-  passwordHash   String
-  role           Role          @default(EMPLOYEE)
-  employee       Employee?
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id])
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-
-  @@map("users")
-}
-
 model Department {
-  id             String        @id @default(cuid())
+  id             String       @id @default(cuid())
   name           String
   description    String?
-  managerId      String?       @unique
-  manager        Employee?     @relation("DepartmentManager", fields: [managerId], references: [id])
-  employees      Employee[]    @relation("DepartmentEmployees")
-  positions      Position[]
+  managerId      String?      @unique
+  manager        Employee?    @relation("DepartmentManager", fields: [managerId], references: [id])
+  employees      Employee[]   @relation("DepartmentEmployees")
   organizationId String
-  organization   Organization  @relation(fields: [organizationId], references: [id])
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   @@unique([name, organizationId])
   @@map("departments")
 }
 
 model Position {
-  id           String     @id @default(cuid())
-  title        String
-  description  String?
-  departmentId String
-  department   Department @relation(fields: [departmentId], references: [id])
-  employees    Employee[]
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  id          String     @id @default(cuid())
+  title       String     @unique
+  description String?
+  employees   Employee[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
   @@map("positions")
 }
 
 model Employee {
-  id                    String              @id @default(cuid())
-  employeeCode          String              @unique
-  firstName             String
-  lastName              String
-  email                 String              @unique
-  phone                 String?
-  gender                Gender?
-  dateOfBirth           DateTime?
-  nationality           String?
-  identificationType    IdentificationType?
-  identificationNumber  String?             @unique
-  hireDate              DateTime            @default(now())
-  salary                Decimal             @db.Decimal(12, 2)
-  status                EmploymentStatus    @default(ACTIVE)
-  employmentType        EmploymentType      @default(FULL_TIME)
-  userId                String?             @unique
-  user                  User?               @relation(fields: [userId], references: [id])
-  departmentId          String?
-  department            Department?         @relation("DepartmentEmployees", fields: [departmentId], references: [id])
-  managedDept           Department?         @relation("DepartmentManager")
-  positionId            String?
-  position              Position?           @relation(fields: [positionId], references: [id])
-  managerId             String?
-  manager               Employee?           @relation("EmployeeManager", fields: [managerId], references: [id])
-  subordinates          Employee[]          @relation("EmployeeManager")
-  leaveRequests         LeaveRequest[]
-  leaveBalances         LeaveBalance[]
-  contracts             EmployeeContract[]
-  documents             EmployeeDocument[]
-  organizationId        String
-  organization          Organization        @relation(fields: [organizationId], references: [id])
-  createdAt             DateTime            @default(now())
-  updatedAt             DateTime            @updatedAt
+  id                   String              @id @default(cuid())
+  employeeCode         String              @unique
+  firstName            String
+  lastName             String
+  email                String              @unique
+  personalEmail        String?
+  passwordHash         String
+  role                 Role                @default(EMPLOYEE)
+  nickname             String?
+  profilePicture       String?
+  phone                String?
+  gender               Gender?
+  dateOfBirth          DateTime?
+  nationality          String?
+  identificationType   IdentificationType?
+  identificationNumber String?             @unique
+  countryId            String
+  country              Country             @relation(fields: [countryId], references: [id])
+  address              String?
+  bankName             String?
+  bankAccountNumber    String?
+  hireDate             DateTime            @default(now())
+  salary               Decimal             @db.Decimal(12, 2)
+  status               EmploymentStatus    @default(ACTIVE)
+  employmentType       EmploymentType      @default(FULL_TIME)
+  departmentId         String?
+  department           Department?         @relation("DepartmentEmployees", fields: [departmentId], references: [id])
+  managedDept          Department?         @relation("DepartmentManager")
+  positionId           String?
+  position             Position?           @relation(fields: [positionId], references: [id])
+  managerId            String?
+  manager              Employee?           @relation("EmployeeManager", fields: [managerId], references: [id])
+  subordinates         Employee[]          @relation("EmployeeManager")
+  leaveRequests        LeaveRequest[]
+  leaveBalances        LeaveBalance[]
+  contracts            EmployeeContract[]
+  documents            EmployeeDocument[]
+  organizationId       String
+  organization         Organization        @relation(fields: [organizationId], references: [id])
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
 
   @@map("employees")
 }
@@ -202,33 +185,37 @@ model EmployeeDocument {
   @@map("employee_documents")
 }
 
-model LeavePolicy {
-  id            String         @id @default(cuid())
-  name          String         @unique
-  leaveType     LeaveType
-  daysPerYear   Int
-  carryForward  Boolean        @default(false)
-  maxCarryDays  Int            @default(0)
-  description   String?
-  leaveBalances LeaveBalance[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+model LeaveType {
+  id               String         @id @default(cuid())
+  name             String
+  organizationId   String
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  daysPerYear      Int
+  carryForward     Boolean        @default(false)
+  maxCarryDays     Int            @default(0)
+  restrictedGender Gender?
+  description      String?
+  leaveBalances    LeaveBalance[]
+  leaveRequests    LeaveRequest[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 
-  @@map("leave_policies")
+  @@unique([name, organizationId])
+  @@map("leave_types")
 }
 
 model LeaveBalance {
-  id            String      @id @default(cuid())
+  id            String    @id @default(cuid())
   employeeId    String
-  employee      Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  policyId      String
-  policy        LeavePolicy @relation(fields: [policyId], references: [id])
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveTypeId   String
+  leaveType     LeaveType @relation(fields: [leaveTypeId], references: [id])
   year          Int
   totalDays     Int
-  usedDays      Int         @default(0)
+  usedDays      Int       @default(0)
   remainingDays Int
 
-  @@unique([employeeId, policyId, year])
+  @@unique([employeeId, leaveTypeId, year])
   @@map("leave_balances")
 }
 
@@ -236,7 +223,8 @@ model LeaveRequest {
   id          String      @id @default(cuid())
   employeeId  String
   employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  leaveType   LeaveType
+  leaveTypeId String
+  leaveType   LeaveType   @relation(fields: [leaveTypeId], references: [id])
   startDate   DateTime
   endDate     DateTime
   totalDays   Int
@@ -248,4 +236,32 @@ model LeaveRequest {
   updatedAt   DateTime    @updatedAt
 
   @@map("leave_requests")
+}
+
+// Global, shared across every organization — not scoped by organizationId.
+// No create/update/delete API; rows are added manually (e.g. once a year).
+model PublicHoliday {
+  id          String   @id @default(cuid())
+  name        String
+  date        DateTime @db.Date
+  countryId   String
+  country     Country  @relation(fields: [countryId], references: [id])
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([name, date])
+  @@map("public_holidays")
+}
+
+model Country {
+  id             String          @id @default(cuid())
+  name           String          @unique
+  code           String?         @unique
+  employees      Employee[]
+  publicHolidays PublicHoliday[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@map("countries")
 }

@@ -57,4 +57,13 @@ export class CreateOrganizationDto {
   @IsOptional()
   @IsBoolean()
   isDefault?: boolean;
+
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'When true, leave approval never blocks on insufficient balance',
+  })
+  @IsOptional()
+  @IsBoolean()
+  unlimitedLeave?: boolean;
 }

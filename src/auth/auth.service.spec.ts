@@ -7,7 +7,7 @@ import { AuthService } from './auth.service.ts';
 import { PrismaService } from '../prisma/prisma.service.ts';
 
 const mockPrisma = {
-  user: {
+  employee: {
     findUnique: jest.fn<any>(),
   },
 };
@@ -47,7 +47,7 @@ describe('AuthService', () => {
     };
 
     it('returns an access token and user info for valid credentials', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({
+      mockPrisma.employee.findUnique.mockResolvedValue({
         ...baseUser,
         passwordHash,
       });
@@ -58,8 +58,9 @@ describe('AuthService', () => {
         'correct-password',
       );
 
-      expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
+      expect(mockPrisma.employee.findUnique).toHaveBeenCalledWith({
         where: { email: 'jane@example.com' },
+        omit: { passwordHash: false },
       });
       expect(mockJwtService.signAsync).toHaveBeenCalledWith({
         sub: 'u1',
@@ -74,7 +75,7 @@ describe('AuthService', () => {
     });
 
     it('throws UnauthorizedException when the email does not exist', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.employee.findUnique.mockResolvedValue(null);
 
       await expect(
         service.login('missing@example.com', 'whatever'),
@@ -83,7 +84,7 @@ describe('AuthService', () => {
     });
 
     it('throws UnauthorizedException when the password is incorrect', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({
+      mockPrisma.employee.findUnique.mockResolvedValue({
         ...baseUser,
         passwordHash,
       });

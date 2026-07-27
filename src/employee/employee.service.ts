@@ -5,17 +5,28 @@ import {
   ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service.ts';
 import { CreateEmployeeDto } from './dto/create-employee.dto.ts';
 import { UpdateEmployeeDto } from './dto/update-employee.dto.ts';
 import { CreateEmployeeContractDto } from './dto/create-employee-contract.dto.ts';
 import { CreateEmployeeDocumentDto } from './dto/create-employee-document.dto.ts';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto.ts';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface.ts';
-import { Role, EmploymentStatus } from '../../generated/prisma/enums.js';
+import {
+  Role,
+  EmploymentStatus,
+  LeaveStatus,
+} from '../../generated/prisma/enums.js';
+import { S3Service } from '../upload/s3.service.ts';
 
 @Injectable()
 export class EmployeeService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly s3: S3Service,
+  ) {}
 
   private toEmployeeData<T extends { dateOfBirth?: string; hireDate?: string }>(
     dto: T,
@@ -62,6 +73,10 @@ export class EmployeeService {
     }
   }
 
+  private generateTemporaryPassword(): string {
+    return randomBytes(9).toString('base64url');
+  }
+
   /** A department must be a real department in the same organization. */
   private async assertValidDepartment(
     departmentId: string,
@@ -90,6 +105,12 @@ export class EmployeeService {
       );
     }
 
+    if (dto.role && dto.role !== Role.EMPLOYEE && user.role !== Role.ADMIN) {
+      throw new ForbiddenException(
+        'Only an admin can assign a role other than EMPLOYEE',
+      );
+    }
+
     const organization = await this.prisma.organization.findUnique({
       where: { id: dto.organizationId },
     });
@@ -97,6 +118,13 @@ export class EmployeeService {
       throw new NotFoundException(
         `Organization ${dto.organizationId} not found`,
       );
+    }
+
+    const country = await this.prisma.country.findUnique({
+      where: { id: dto.countryId },
+    });
+    if (!country) {
+      throw new NotFoundException(`Country ${dto.countryId} not found`);
     }
 
     const existing = await this.prisma.employee.findFirst({
@@ -124,10 +152,42 @@ export class EmployeeService {
       await this.assertValidDepartment(dto.departmentId, dto.organizationId);
     }
 
-    return this.prisma.employee.create({ data: this.toEmployeeData(dto) });
+    const temporaryPassword = this.generateTemporaryPassword();
+    const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+
+    return this.prisma.$transaction(async (tx) => {
+      const employee = await tx.employee.create({
+        data: {
+          ...this.toEmployeeData(dto),
+          role: dto.role ?? Role.EMPLOYEE,
+          passwordHash,
+        },
+      });
+      const leaveTypes = await tx.leaveType.findMany({
+        where: { organizationId: employee.organizationId },
+      });
+      if (leaveTypes.length) {
+        await tx.leaveBalance.createMany({
+          data: leaveTypes.map((leaveType) => ({
+            employeeId: employee.id,
+            leaveTypeId: leaveType.id,
+            year: new Date().getFullYear(),
+            totalDays: leaveType.daysPerYear,
+            usedDays: 0,
+            remainingDays: leaveType.daysPerYear,
+          })),
+        });
+      }
+      return { ...employee, temporaryPassword };
+    });
   }
 
-  findAll(user: AuthenticatedUser, organizationId?: string) {
+  async findAll(
+    user: AuthenticatedUser,
+    organizationId?: string,
+    page = 1,
+    limit = 20,
+  ) {
     if (user.role !== Role.ADMIN && !user.organizationId) {
       throw new ForbiddenException(
         'User is not associated with an organization',
@@ -135,15 +195,76 @@ export class EmployeeService {
     }
     const scopedOrgId =
       user.role === Role.ADMIN ? organizationId : user.organizationId;
+    const where = scopedOrgId ? { organizationId: scopedOrgId } : undefined;
+    const skip = (page - 1) * limit;
 
-    return this.prisma.employee.findMany({
-      where: scopedOrgId ? { organizationId: scopedOrgId } : undefined,
-      orderBy: { createdAt: 'asc' },
+    const [data, total] = await Promise.all([
+      this.prisma.employee.findMany({
+        where,
+        orderBy: { createdAt: 'asc' },
+        skip,
+        take: limit,
+        omit: {
+          phone: true,
+          address: true,
+          bankAccountNumber: true,
+          salary: true,
+        },
+      }),
+      this.prisma.employee.count({ where }),
+    ]);
+    return { data, total, page, limit };
+  }
+
+  /** Lightweight { id, name } list of the caller's own organization, for dropdown use. */
+  async listOptions(user: AuthenticatedUser) {
+    if (!user.organizationId) {
+      throw new ForbiddenException(
+        'User is not associated with an organization',
+      );
+    }
+
+    const employees = await this.prisma.employee.findMany({
+      where: { organizationId: user.organizationId },
+      orderBy: { firstName: 'asc' },
+      select: { id: true, firstName: true, lastName: true },
     });
+
+    return employees.map((employee) => ({
+      id: employee.id,
+      name: `${employee.firstName} ${employee.lastName}`,
+    }));
   }
 
   async findOne(id: string, user: AuthenticatedUser) {
     const employee = await this.prisma.employee.findUnique({ where: { id } });
+    if (!employee) throw new NotFoundException(`Employee ${id} not found`);
+    this.assertOrgAccess(employee, user);
+    return employee;
+  }
+
+  /**
+   * Full profile view: the employee plus their organization, this year's leave
+   * balances (days used/remaining per leave type), and their 5 most recent
+   * approved leave requests.
+   */
+  async getProfile(id: string, user: AuthenticatedUser) {
+    const employee = await this.prisma.employee.findUnique({
+      where: { id },
+      include: {
+        organization: true,
+        leaveBalances: {
+          where: { year: new Date().getFullYear() },
+          include: { leaveType: { select: { id: true, name: true } } },
+        },
+        leaveRequests: {
+          where: { status: LeaveStatus.APPROVED },
+          orderBy: { startDate: 'desc' },
+          take: 5,
+          include: { leaveType: { select: { id: true, name: true } } },
+        },
+      },
+    });
     if (!employee) throw new NotFoundException(`Employee ${id} not found`);
     this.assertOrgAccess(employee, user);
     return employee;
@@ -196,9 +317,50 @@ export class EmployeeService {
       await this.assertValidDepartment(dto.departmentId, targetOrgId);
     }
 
+    if (dto.countryId) {
+      const country = await this.prisma.country.findUnique({
+        where: { id: dto.countryId },
+      });
+      if (!country) {
+        throw new NotFoundException(`Country ${dto.countryId} not found`);
+      }
+    }
+
     return this.prisma.employee.update({
       where: { id },
       data: this.toEmployeeData(dto),
+    });
+  }
+
+  async updateOwnProfile(
+    user: AuthenticatedUser,
+    dto: UpdateMyProfileDto,
+    file?: Express.Multer.File,
+  ) {
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: user.id },
+    });
+    if (!employee) {
+      throw new NotFoundException('No employee profile linked to this account');
+    }
+
+    let profilePicture: string | undefined;
+    if (file) {
+      const extension = file.originalname.split('.').pop() ?? 'jpg';
+      const key = `employees/${employee.id}/profile-picture-${Date.now()}.${extension}`;
+      profilePicture = await this.s3.uploadFile(
+        file.buffer,
+        key,
+        file.mimetype,
+      );
+    }
+
+    return this.prisma.employee.update({
+      where: { id: employee.id },
+      data: {
+        ...(dto.nickname !== undefined ? { nickname: dto.nickname } : {}),
+        ...(profilePicture !== undefined ? { profilePicture } : {}),
+      },
     });
   }
 

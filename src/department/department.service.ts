@@ -91,7 +91,12 @@ export class DepartmentService {
     return this.prisma.department.create({ data: dto });
   }
 
-  findAll(user: AuthenticatedUser, organizationId?: string) {
+  async findAll(
+    user: AuthenticatedUser,
+    organizationId?: string,
+    page = 1,
+    limit = 20,
+  ) {
     if (user.role !== Role.ADMIN && !user.organizationId) {
       throw new ForbiddenException(
         'User is not associated with an organization',
@@ -99,11 +104,19 @@ export class DepartmentService {
     }
     const scopedOrgId =
       user.role === Role.ADMIN ? organizationId : user.organizationId;
+    const where = scopedOrgId ? { organizationId: scopedOrgId } : undefined;
+    const skip = (page - 1) * limit;
 
-    return this.prisma.department.findMany({
-      where: scopedOrgId ? { organizationId: scopedOrgId } : undefined,
-      orderBy: { createdAt: 'asc' },
-    });
+    const [data, total] = await Promise.all([
+      this.prisma.department.findMany({
+        where,
+        orderBy: { createdAt: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.department.count({ where }),
+    ]);
+    return { data, total, page, limit };
   }
 
   async findOne(id: string, user: AuthenticatedUser) {
@@ -160,15 +173,6 @@ export class DepartmentService {
     if (employeeCount > 0) {
       throw new ConflictException(
         'Cannot delete a department with employees assigned',
-      );
-    }
-
-    const positionCount = await this.prisma.position.count({
-      where: { departmentId: id },
-    });
-    if (positionCount > 0) {
-      throw new ConflictException(
-        'Cannot delete a department with positions assigned',
       );
     }
 

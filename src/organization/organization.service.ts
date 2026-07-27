@@ -8,7 +8,15 @@ import { PrismaService } from '../prisma/prisma.service.ts';
 import { CreateOrganizationDto } from './dto/create-organization.dto.ts';
 import { UpdateOrganizationDto } from './dto/update-organization.dto.ts';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface.ts';
-import { Role } from '../../generated/prisma/enums.js';
+import { Role, Gender } from '../../generated/prisma/enums.js';
+
+/** Seeded for every new organization; HR can edit these afterward (no separate create endpoint). */
+const DEFAULT_LEAVE_TYPES = [
+  { name: 'Annual', daysPerYear: 14 },
+  { name: 'Sick', daysPerYear: 10 },
+  { name: 'Maternal', daysPerYear: 90, restrictedGender: Gender.FEMALE },
+  { name: 'Paternal', daysPerYear: 14, restrictedGender: Gender.MALE },
+];
 
 @Injectable()
 export class OrganizationService {
@@ -30,22 +38,46 @@ export class OrganizationService {
         'Organization with this name or slug already exists',
       );
     }
-    return this.prisma.organization.create({ data: dto });
+    return this.prisma.$transaction(async (tx) => {
+      const org = await tx.organization.create({ data: dto });
+      await tx.leaveType.createMany({
+        data: DEFAULT_LEAVE_TYPES.map((leaveType) => ({
+          ...leaveType,
+          organizationId: org.id,
+        })),
+      });
+      return org;
+    });
   }
 
-  findAll() {
-    return this.prisma.organization.findMany({ orderBy: { createdAt: 'asc' } });
+  async findAll(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.prisma.organization.findMany({
+        orderBy: { createdAt: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.organization.count(),
+    ]);
+    return { data, total, page, limit };
   }
 
   async findOne(id: string, user: AuthenticatedUser) {
-    const org = await this.prisma.organization.findUnique({ where: { id } });
+    const org = await this.prisma.organization.findUnique({
+      where: { id },
+      include: { leaveTypes: true },
+    });
     if (!org) throw new NotFoundException(`Organization ${id} not found`);
     this.assertOwnOrg(org, user);
     return org;
   }
 
   async findBySlug(slug: string, user: AuthenticatedUser) {
-    const org = await this.prisma.organization.findUnique({ where: { slug } });
+    const org = await this.prisma.organization.findUnique({
+      where: { slug },
+      include: { leaveTypes: true },
+    });
     if (!org) throw new NotFoundException(`Organization '${slug}' not found`);
     this.assertOwnOrg(org, user);
     return org;

@@ -25,6 +25,7 @@ import {
 import { DepartmentService } from './department.service.ts';
 import { CreateDepartmentDto } from './dto/create-department.dto.ts';
 import { UpdateDepartmentDto } from './dto/update-department.dto.ts';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto.ts';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.ts';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.ts';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface.ts';
@@ -65,12 +66,15 @@ export class DepartmentController {
     description:
       'Filter by organization ID (admin only; other roles are always scoped to their own org)',
   })
-  @ApiOkResponse({ description: 'Array of departments' })
+  @ApiOkResponse({
+    description: 'Paginated list of departments: { data, total, page, limit }',
+  })
   findAll(
     @Query('organizationId') organizationId: string | undefined,
+    @Query() { page, limit }: PaginationQueryDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.departmentService.findAll(user, organizationId);
+    return this.departmentService.findAll(user, organizationId, page, limit);
   }
 
   @Get(':id')
@@ -111,7 +115,7 @@ export class DepartmentController {
   @ApiResponse({ status: 404, description: 'Department not found' })
   @ApiResponse({
     status: 409,
-    description: 'Department still has employees or positions assigned',
+    description: 'Department still has employees assigned',
   })
   remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.departmentService.remove(id, user);

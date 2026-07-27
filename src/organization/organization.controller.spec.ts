@@ -48,14 +48,14 @@ describe('OrganizationController', () => {
   });
 
   describe('findAll', () => {
-    it('delegates to service.findAll and returns the list', async () => {
-      const orgs = [{ id: '1' }, { id: '2' }];
-      mockService.findAll.mockResolvedValue(orgs);
+    it('delegates to service.findAll with the page and limit', async () => {
+      const paginated = { data: [{ id: '1' }, { id: '2' }], total: 2, page: 1, limit: 20 };
+      mockService.findAll.mockResolvedValue(paginated);
 
-      const result = await controller.findAll();
+      const result = await controller.findAll({ page: 1, limit: 20 });
 
-      expect(mockService.findAll).toHaveBeenCalled();
-      expect(result).toEqual(orgs);
+      expect(mockService.findAll).toHaveBeenCalledWith(1, 20);
+      expect(result).toEqual(paginated);
     });
   });
 

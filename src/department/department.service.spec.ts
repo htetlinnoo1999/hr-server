@@ -17,15 +17,13 @@ const mockPrisma = {
     findFirst: jest.fn<any>(),
     create: jest.fn<any>(),
     findMany: jest.fn<any>(),
+    count: jest.fn<any>(),
     findUnique: jest.fn<any>(),
     update: jest.fn<any>(),
     delete: jest.fn<any>(),
   },
   employee: {
     findUnique: jest.fn<any>(),
-    count: jest.fn<any>(),
-  },
-  position: {
     count: jest.fn<any>(),
   },
 };
@@ -203,31 +201,61 @@ describe('DepartmentService', () => {
     it('scopes non-admins to their own organization, ignoring the query param', async () => {
       const departments = [{ id: '1' }];
       mockPrisma.department.findMany.mockResolvedValue(departments);
+      mockPrisma.department.count.mockResolvedValue(1);
 
       const result = await service.findAll(ownUser as any, 'org2');
 
       expect(mockPrisma.department.findMany).toHaveBeenCalledWith({
         where: { organizationId: 'org1' },
         orderBy: { createdAt: 'asc' },
+        skip: 0,
+        take: 20,
       });
-      expect(result).toEqual(departments);
+      expect(result).toEqual({
+        data: departments,
+        total: 1,
+        page: 1,
+        limit: 20,
+      });
     });
 
     it('lets an admin list all departments when no organizationId filter is given', async () => {
       const departments = [{ id: '1' }, { id: '2' }];
       mockPrisma.department.findMany.mockResolvedValue(departments);
+      mockPrisma.department.count.mockResolvedValue(2);
 
       const result = await service.findAll(adminUser as any);
 
       expect(mockPrisma.department.findMany).toHaveBeenCalledWith({
         where: undefined,
         orderBy: { createdAt: 'asc' },
+        skip: 0,
+        take: 20,
       });
-      expect(result).toEqual(departments);
+      expect(result).toEqual({
+        data: departments,
+        total: 2,
+        page: 1,
+        limit: 20,
+      });
     });
 
-    it('throws ForbiddenException for a non-admin with no organization', () => {
-      expect(() => service.findAll(orglessUser as any)).toThrow(
+    it('computes skip from the requested page and limit', async () => {
+      mockPrisma.department.findMany.mockResolvedValue([]);
+      mockPrisma.department.count.mockResolvedValue(0);
+
+      await service.findAll(adminUser as any, undefined, 2, 5);
+
+      expect(mockPrisma.department.findMany).toHaveBeenCalledWith({
+        where: undefined,
+        orderBy: { createdAt: 'asc' },
+        skip: 5,
+        take: 5,
+      });
+    });
+
+    it('throws ForbiddenException for a non-admin with no organization', async () => {
+      await expect(service.findAll(orglessUser as any)).rejects.toThrow(
         ForbiddenException,
       );
       expect(mockPrisma.department.findMany).not.toHaveBeenCalled();
@@ -370,18 +398,14 @@ describe('DepartmentService', () => {
       organizationId: 'org1',
     };
 
-    it('deletes and returns the department when it has no employees or positions', async () => {
+    it('deletes and returns the department when it has no employees', async () => {
       mockPrisma.department.findUnique.mockResolvedValue(department);
       mockPrisma.employee.count.mockResolvedValue(0);
-      mockPrisma.position.count.mockResolvedValue(0);
       mockPrisma.department.delete.mockResolvedValue(department);
 
       const result = await service.remove('abc', ownUser as any);
 
       expect(mockPrisma.employee.count).toHaveBeenCalledWith({
-        where: { departmentId: 'abc' },
-      });
-      expect(mockPrisma.position.count).toHaveBeenCalledWith({
         where: { departmentId: 'abc' },
       });
       expect(mockPrisma.department.delete).toHaveBeenCalledWith({
@@ -393,17 +417,6 @@ describe('DepartmentService', () => {
     it('throws ConflictException when the department still has employees', async () => {
       mockPrisma.department.findUnique.mockResolvedValue(department);
       mockPrisma.employee.count.mockResolvedValue(2);
-
-      await expect(service.remove('abc', ownUser as any)).rejects.toThrow(
-        ConflictException,
-      );
-      expect(mockPrisma.department.delete).not.toHaveBeenCalled();
-    });
-
-    it('throws ConflictException when the department still has positions', async () => {
-      mockPrisma.department.findUnique.mockResolvedValue(department);
-      mockPrisma.employee.count.mockResolvedValue(0);
-      mockPrisma.position.count.mockResolvedValue(1);
 
       await expect(service.remove('abc', ownUser as any)).rejects.toThrow(
         ConflictException,

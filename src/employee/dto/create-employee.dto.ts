@@ -14,6 +14,7 @@ import {
   EmploymentStatus,
   EmploymentType,
   IdentificationType,
+  Role,
 } from '../../../generated/prisma/enums.js';
 
 export class CreateEmployeeDto {
@@ -38,6 +39,14 @@ export class CreateEmployeeDto {
   @ApiProperty({ example: 'jane.doe@example.com' })
   @IsEmail()
   email: string;
+
+  @ApiPropertyOptional({
+    example: 'jane.personal@example.com',
+    description: 'Personal (non-work) email address',
+  })
+  @IsOptional()
+  @IsEmail()
+  personalEmail?: string;
 
   @ApiPropertyOptional({ example: '+95912345678' })
   @IsOptional()
@@ -77,6 +86,28 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsString()
   identificationNumber?: string;
+
+  @ApiProperty({
+    description:
+      'Country this employee belongs to (for public holiday calendar)',
+  })
+  @IsString()
+  countryId: string;
+
+  @ApiPropertyOptional({ example: 'No. 12, Bogyoke Aung San Street, Yangon' })
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @ApiPropertyOptional({ example: 'KBZ Bank' })
+  @IsOptional()
+  @IsString()
+  bankName?: string;
+
+  @ApiPropertyOptional({ example: '0123456789012' })
+  @IsOptional()
+  @IsString()
+  bankAccountNumber?: string;
 
   @ApiPropertyOptional({
     example: '2024-01-15',
@@ -125,8 +156,13 @@ export class CreateEmployeeDto {
   @IsString()
   managerId?: string;
 
-  @ApiPropertyOptional({ description: 'Linked User account ID' })
+  @ApiPropertyOptional({
+    enum: Role,
+    default: Role.EMPLOYEE,
+    description:
+      'Login role for the new account. Only an admin may set a role other than EMPLOYEE.',
+  })
   @IsOptional()
-  @IsString()
-  userId?: string;
+  @IsEnum(Role)
+  role?: Role;
 }

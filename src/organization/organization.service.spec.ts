@@ -13,6 +13,7 @@ const mockPrisma = {
     findFirst: jest.fn<any>(),
     create: jest.fn<any>(),
     findMany: jest.fn<any>(),
+    count: jest.fn<any>(),
     findUnique: jest.fn<any>(),
     update: jest.fn<any>(),
     delete: jest.fn<any>(),
@@ -20,7 +21,12 @@ const mockPrisma = {
   employee: {
     count: jest.fn<any>(),
   },
+  leaveType: {
+    createMany: jest.fn<any>(),
+  },
+  $transaction: jest.fn<any>(),
 };
+mockPrisma.$transaction.mockImplementation((cb: any) => cb(mockPrisma));
 
 const adminUser = {
   id: 'u-admin',
@@ -93,22 +99,65 @@ describe('OrganizationService', () => {
       await expect(service.create(dto)).rejects.toThrow(ConflictException);
       expect(mockPrisma.organization.create).not.toHaveBeenCalled();
     });
+
+    it('seeds the 4 default leave types for the new organization', async () => {
+      mockPrisma.organization.findFirst.mockResolvedValue(null);
+      mockPrisma.organization.create.mockResolvedValue(created);
+
+      await service.create(dto);
+
+      expect(mockPrisma.leaveType.createMany).toHaveBeenCalledWith({
+        data: [
+          { name: 'Annual', daysPerYear: 14, organizationId: '1' },
+          { name: 'Sick', daysPerYear: 10, organizationId: '1' },
+          {
+            name: 'Maternal',
+            daysPerYear: 90,
+            restrictedGender: 'FEMALE',
+            organizationId: '1',
+          },
+          {
+            name: 'Paternal',
+            daysPerYear: 14,
+            restrictedGender: 'MALE',
+            organizationId: '1',
+          },
+        ],
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------
   // findAll
   // ---------------------------------------------------------------------------
   describe('findAll', () => {
-    it('returns all organizations ordered by createdAt asc', async () => {
+    it('returns a paginated page of organizations ordered by createdAt asc', async () => {
       const orgs = [{ id: '1' }, { id: '2' }];
       mockPrisma.organization.findMany.mockResolvedValue(orgs);
+      mockPrisma.organization.count.mockResolvedValue(2);
 
       const result = await service.findAll();
 
       expect(mockPrisma.organization.findMany).toHaveBeenCalledWith({
         orderBy: { createdAt: 'asc' },
+        skip: 0,
+        take: 20,
       });
-      expect(result).toEqual(orgs);
+      expect(mockPrisma.organization.count).toHaveBeenCalledWith();
+      expect(result).toEqual({ data: orgs, total: 2, page: 1, limit: 20 });
+    });
+
+    it('computes skip from the requested page and limit', async () => {
+      mockPrisma.organization.findMany.mockResolvedValue([]);
+      mockPrisma.organization.count.mockResolvedValue(0);
+
+      await service.findAll(3, 10);
+
+      expect(mockPrisma.organization.findMany).toHaveBeenCalledWith({
+        orderBy: { createdAt: 'asc' },
+        skip: 20,
+        take: 10,
+      });
     });
   });
 
@@ -125,6 +174,7 @@ describe('OrganizationService', () => {
 
       expect(mockPrisma.organization.findUnique).toHaveBeenCalledWith({
         where: { id: 'abc' },
+        include: { leaveTypes: true },
       });
       expect(result).toEqual(org);
     });
@@ -167,6 +217,7 @@ describe('OrganizationService', () => {
 
       expect(mockPrisma.organization.findUnique).toHaveBeenCalledWith({
         where: { slug: 'acme' },
+        include: { leaveTypes: true },
       });
       expect(result).toEqual(org);
     });
