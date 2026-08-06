@@ -46,6 +46,14 @@ enum LeaveStatus {
   CANCELLED
 }
 
+enum ReimbursementStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  PAID
+}
+
 enum IdentificationType {
   NRC
   PASSPORT
@@ -79,10 +87,32 @@ model Organization {
   employees      Employee[]
   departments    Department[]
   leaveTypes     LeaveType[]
+  endClients     EndClient[]
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
   @@map("organizations")
+}
+
+// A staffing placement client — the company a contractor/temp employee is
+// deployed to work for, distinct from the Organization (their employer).
+model EndClient {
+  id             String       @id @default(cuid())
+  name           String
+  contactPerson  String?
+  email          String?
+  whatsappNumber String?
+  phone          String?
+  address        String?
+  notes          String?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employees      Employee[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([name, organizationId])
+  @@map("end_clients")
 }
 
 model Department {
@@ -129,6 +159,7 @@ model Employee {
   nationality          String?
   identificationType   IdentificationType?
   identificationNumber String?             @unique
+  visaEndDate          DateTime?
   countryId            String
   country              Country             @relation(fields: [countryId], references: [id])
   address              String?
@@ -143,6 +174,8 @@ model Employee {
   managedDept          Department?         @relation("DepartmentManager")
   positionId           String?
   position             Position?           @relation(fields: [positionId], references: [id])
+  endClientId          String?
+  endClient            EndClient?          @relation(fields: [endClientId], references: [id])
   managerId            String?
   manager              Employee?           @relation("EmployeeManager", fields: [managerId], references: [id])
   subordinates         Employee[]          @relation("EmployeeManager")
@@ -150,6 +183,8 @@ model Employee {
   leaveBalances        LeaveBalance[]
   contracts            EmployeeContract[]
   documents            EmployeeDocument[]
+  allowances           EmployeeAllowance[]
+  reimbursements       Reimbursement[]
   organizationId       String
   organization         Organization        @relation(fields: [organizationId], references: [id])
   createdAt            DateTime            @default(now())
@@ -183,6 +218,19 @@ model EmployeeDocument {
   uploadedAt   DateTime @default(now())
 
   @@map("employee_documents")
+}
+
+// A recurring monthly allowance on top of salary (e.g. Housing, Transport, Phone).
+model EmployeeAllowance {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  name       String
+  amount     Decimal  @db.Decimal(12, 2)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("employee_allowances")
 }
 
 model LeaveType {
@@ -220,22 +268,45 @@ model LeaveBalance {
 }
 
 model LeaveRequest {
-  id          String      @id @default(cuid())
-  employeeId  String
-  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  leaveTypeId String
-  leaveType   LeaveType   @relation(fields: [leaveTypeId], references: [id])
-  startDate   DateTime
-  endDate     DateTime
-  totalDays   Int
-  reason      String?
-  status      LeaveStatus @default(PENDING)
-  reviewedBy  String?
-  reviewNote  String?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id             String      @id @default(cuid())
+  employeeId     String
+  employee       Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveTypeId    String
+  leaveType      LeaveType   @relation(fields: [leaveTypeId], references: [id])
+  startDate      DateTime
+  endDate        DateTime
+  totalDays      Int
+  reason         String?
+  status         LeaveStatus @default(PENDING)
+  reviewedBy     String?
+  reviewNote     String?
+  attachmentUrls String[]    @default([])
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
 
   @@map("leave_requests")
+}
+
+// Approved by the employee's department head (or HR/admin as a fallback);
+// once approved, HR marks it PAID once the money has actually gone out.
+model Reimbursement {
+  id          String              @id @default(cuid())
+  employeeId  String
+  employee    Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  amount      Decimal             @db.Decimal(12, 2)
+  category    String
+  description String?
+  expenseDate DateTime
+  receiptUrl  String?
+  status      ReimbursementStatus @default(PENDING)
+  reviewedBy  String?
+  reviewNote  String?
+  paidBy      String?
+  paidAt      DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@map("reimbursements")
 }
 
 // Global, shared across every organization — not scoped by organizationId.

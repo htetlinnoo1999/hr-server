@@ -27,6 +27,8 @@ export class CreateEmployeeContractDto {
 
   @ApiPropertyOptional({
     example: 'https://example.com/contracts/emp-0001.pdf',
+    description:
+      'URL of an already-hosted file. Ignored if a `file` is uploaded instead.',
   })
   @IsOptional()
   @IsString()

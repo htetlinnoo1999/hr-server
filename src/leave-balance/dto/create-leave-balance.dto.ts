@@ -10,7 +10,10 @@ export class CreateLeaveBalanceDto {
   @IsString()
   leaveTypeId: string;
 
-  @ApiProperty({ example: 2026, description: 'Calendar year this balance applies to' })
+  @ApiProperty({
+    example: 2026,
+    description: 'Calendar year this balance applies to',
+  })
   @IsInt()
   @Min(2000)
   year: number;

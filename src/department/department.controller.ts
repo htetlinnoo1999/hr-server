@@ -38,13 +38,10 @@ export class DepartmentController {
   constructor(private readonly departmentService: DepartmentService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create a new department' })
-  @ApiCreatedResponse({ description: 'Department created successfully' })
-  @ApiResponse({
-    status: 403,
-    description: 'Cannot create a department outside your organization',
+  @ApiOperation({
+    summary: "Create a new department in the caller's organization",
   })
-  @ApiResponse({ status: 404, description: 'Organization not found' })
+  @ApiCreatedResponse({ description: 'Department created successfully' })
   @ApiResponse({
     status: 409,
     description: 'A department with this name already exists',
@@ -90,10 +87,6 @@ export class DepartmentController {
   @ApiOperation({ summary: 'Update a department' })
   @ApiParam({ name: 'id', description: 'Department ID' })
   @ApiOkResponse({ description: 'Updated department' })
-  @ApiResponse({
-    status: 403,
-    description: 'Cannot move a department to a different organization',
-  })
   @ApiResponse({ status: 404, description: 'Department not found' })
   @ApiResponse({
     status: 409,

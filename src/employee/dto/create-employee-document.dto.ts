@@ -9,9 +9,14 @@ export class CreateEmployeeDocumentDto {
   @IsString()
   documentType: string;
 
-  @ApiProperty({ example: 'https://example.com/docs/emp-0001-certificate.pdf' })
+  @ApiPropertyOptional({
+    example: 'https://example.com/docs/emp-0001-certificate.pdf',
+    description:
+      'URL of an already-hosted file. Ignored if a `file` is uploaded instead.',
+  })
+  @IsOptional()
   @IsString()
-  fileUrl: string;
+  fileUrl?: string;
 
   @ApiPropertyOptional({ example: 'Bachelor degree certificate' })
   @IsOptional()

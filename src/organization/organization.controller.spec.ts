@@ -49,7 +49,12 @@ describe('OrganizationController', () => {
 
   describe('findAll', () => {
     it('delegates to service.findAll with the page and limit', async () => {
-      const paginated = { data: [{ id: '1' }, { id: '2' }], total: 2, page: 1, limit: 20 };
+      const paginated = {
+        data: [{ id: '1' }, { id: '2' }],
+        total: 2,
+        page: 1,
+        limit: 20,
+      };
       mockService.findAll.mockResolvedValue(paginated);
 
       const result = await controller.findAll({ page: 1, limit: 20 });

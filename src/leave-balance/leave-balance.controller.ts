@@ -21,6 +21,8 @@ import {
 import { LeaveBalanceService } from './leave-balance.service.ts';
 import { CreateLeaveBalanceDto } from './dto/create-leave-balance.dto.ts';
 import { UpdateLeaveBalanceDto } from './dto/update-leave-balance.dto.ts';
+import { RolloverLeaveBalancesDto } from './dto/rollover-leave-balances.dto.ts';
+import { BulkCreateLeaveBalancesDto } from './dto/bulk-create-leave-balances.dto.ts';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.ts';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.ts';
 import { RolesGuard } from '../auth/guards/roles.guard.ts';
@@ -39,9 +41,14 @@ export class LeaveBalanceController {
   @Post()
   @UseGuards(RolesGuard)
   @Roles(Role.ADMIN, Role.HR_MANAGER)
-  @ApiOperation({ summary: 'Create a leave balance for an employee (admin/HR only)' })
+  @ApiOperation({
+    summary: 'Create a leave balance for an employee (admin/HR only)',
+  })
   @ApiCreatedResponse({ description: 'Leave balance created successfully' })
-  @ApiResponse({ status: 403, description: 'Cannot create outside your organization' })
+  @ApiResponse({
+    status: 403,
+    description: 'Cannot create outside your organization',
+  })
   @ApiResponse({ status: 404, description: 'Employee or leave type not found' })
   @ApiResponse({
     status: 409,
@@ -52,6 +59,55 @@ export class LeaveBalanceController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.leaveBalanceService.create(dto, user);
+  }
+
+  @Post('bulk')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  @ApiOperation({
+    summary:
+      'Create several leave balances for one employee in a single call, e.g. sick leave 30, annual 10 (admin/HR only)',
+  })
+  @ApiCreatedResponse({
+    description:
+      '{ created, skipped, data } — balances that already existed for a given leave type/year are skipped, not errored on',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Cannot create outside your organization',
+  })
+  @ApiResponse({ status: 404, description: 'Employee or leave type not found' })
+  @ApiResponse({
+    status: 400,
+    description: 'A leave type was listed more than once in the request',
+  })
+  bulkCreate(
+    @Body() dto: BulkCreateLeaveBalancesDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.leaveBalanceService.bulkCreate(dto, user);
+  }
+
+  @Post('rollover')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  @ApiOperation({
+    summary:
+      "Roll balances from one year into the next, applying each leave type's carry-forward rules (admin/HR only)",
+  })
+  @ApiCreatedResponse({
+    description:
+      'Number of new leave balances created (existing ones for the target year are left untouched)',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'toYear must be exactly one year after fromYear',
+  })
+  rollover(
+    @Body() dto: RolloverLeaveBalancesDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.leaveBalanceService.rollover(dto, user);
   }
 
   @Get()

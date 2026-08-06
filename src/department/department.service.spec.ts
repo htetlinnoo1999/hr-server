@@ -25,8 +25,11 @@ const mockPrisma = {
   employee: {
     findUnique: jest.fn<any>(),
     count: jest.fn<any>(),
+    update: jest.fn<any>(),
   },
+  $transaction: jest.fn<any>(),
 };
+mockPrisma.$transaction.mockImplementation((cb: any) => cb(mockPrisma));
 
 const adminUser = {
   id: 'u-admin',
@@ -73,51 +76,32 @@ describe('DepartmentService', () => {
   // create
   // ---------------------------------------------------------------------------
   describe('create', () => {
-    const dto = { organizationId: 'org1', name: 'Engineering' };
-    const created = { id: '1', ...dto };
+    const dto = { name: 'Engineering' };
+    const created = { id: '1', ...dto, organizationId: 'org1' };
 
-    it('creates and returns a department when the org exists and no conflicts', async () => {
-      mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
+    it("creates a department in the caller's own organization when no conflicts", async () => {
       mockPrisma.department.findFirst.mockResolvedValue(null);
       mockPrisma.department.create.mockResolvedValue(created);
 
       const result = await service.create(dto as any, ownUser as any);
 
-      expect(mockPrisma.organization.findUnique).toHaveBeenCalledWith({
-        where: { id: 'org1' },
+      expect(mockPrisma.department.findFirst).toHaveBeenCalledWith({
+        where: { name: 'Engineering', organizationId: 'org1' },
       });
-      expect(mockPrisma.department.create).toHaveBeenCalledWith({ data: dto });
+      expect(mockPrisma.department.create).toHaveBeenCalledWith({
+        data: { ...dto, organizationId: 'org1' },
+      });
       expect(result).toEqual(created);
     });
 
-    it('throws ForbiddenException when a non-admin creates outside their own organization', async () => {
+    it('throws ForbiddenException when the caller has no organization', async () => {
       await expect(
-        service.create(dto as any, otherUser as any),
+        service.create(dto as any, orglessUser as any),
       ).rejects.toThrow(ForbiddenException);
       expect(mockPrisma.department.create).not.toHaveBeenCalled();
     });
 
-    it('allows an admin to create a department in any organization', async () => {
-      mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
-      mockPrisma.department.findFirst.mockResolvedValue(null);
-      mockPrisma.department.create.mockResolvedValue(created);
-
-      await service.create(dto as any, adminUser as any);
-
-      expect(mockPrisma.department.create).toHaveBeenCalledWith({ data: dto });
-    });
-
-    it('throws NotFoundException when the organization does not exist', async () => {
-      mockPrisma.organization.findUnique.mockResolvedValue(null);
-
-      await expect(service.create(dto as any, ownUser as any)).rejects.toThrow(
-        NotFoundException,
-      );
-      expect(mockPrisma.department.create).not.toHaveBeenCalled();
-    });
-
     it('throws ConflictException when a department with this name already exists in the org', async () => {
-      mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
       mockPrisma.department.findFirst.mockResolvedValue(created);
 
       await expect(service.create(dto as any, ownUser as any)).rejects.toThrow(
@@ -130,7 +114,6 @@ describe('DepartmentService', () => {
       const dtoWithManager = { ...dto, managerId: 'emp1' };
 
       it('throws NotFoundException when the manager does not exist', async () => {
-        mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
         mockPrisma.department.findFirst.mockResolvedValueOnce(null);
         mockPrisma.employee.findUnique.mockResolvedValue(null);
 
@@ -141,7 +124,6 @@ describe('DepartmentService', () => {
       });
 
       it('throws BadRequestException when the manager belongs to a different organization', async () => {
-        mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
         mockPrisma.department.findFirst.mockResolvedValueOnce(null);
         mockPrisma.employee.findUnique.mockResolvedValue({
           id: 'emp1',
@@ -155,7 +137,6 @@ describe('DepartmentService', () => {
       });
 
       it('throws ConflictException when the manager already manages another department', async () => {
-        mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
         mockPrisma.department.findFirst
           .mockResolvedValueOnce(null) // name conflict check
           .mockResolvedValueOnce({ id: 'other-dept', managerId: 'emp1' }); // manager assignment check
@@ -171,7 +152,6 @@ describe('DepartmentService', () => {
       });
 
       it('creates the department when the manager is valid', async () => {
-        mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
         mockPrisma.department.findFirst
           .mockResolvedValueOnce(null)
           .mockResolvedValueOnce(null);
@@ -182,6 +162,7 @@ describe('DepartmentService', () => {
         mockPrisma.department.create.mockResolvedValue({
           id: '1',
           ...dtoWithManager,
+          organizationId: 'org1',
         });
 
         const result = await service.create(
@@ -189,7 +170,46 @@ describe('DepartmentService', () => {
           ownUser as any,
         );
 
-        expect(result).toEqual({ id: '1', ...dtoWithManager });
+        expect(result).toEqual({
+          id: '1',
+          ...dtoWithManager,
+          organizationId: 'org1',
+        });
+      });
+
+      it('also adds the manager to the department as an employee', async () => {
+        mockPrisma.department.findFirst
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null);
+        mockPrisma.employee.findUnique.mockResolvedValue({
+          id: 'emp1',
+          organizationId: 'org1',
+        });
+        mockPrisma.department.create.mockResolvedValue({
+          id: 'dept1',
+          ...dtoWithManager,
+          organizationId: 'org1',
+        });
+
+        await service.create(dtoWithManager as any, ownUser as any);
+
+        expect(mockPrisma.employee.update).toHaveBeenCalledWith({
+          where: { id: 'emp1' },
+          data: { departmentId: 'dept1' },
+        });
+      });
+
+      it('does not touch the employee table when no manager is given', async () => {
+        mockPrisma.department.findFirst.mockResolvedValue(null);
+        mockPrisma.department.create.mockResolvedValue({
+          id: 'dept1',
+          ...dto,
+          organizationId: 'org1',
+        });
+
+        await service.create(dto as any, ownUser as any);
+
+        expect(mockPrisma.employee.update).not.toHaveBeenCalled();
       });
     });
   });
@@ -345,15 +365,6 @@ describe('DepartmentService', () => {
       expect(mockPrisma.department.update).not.toHaveBeenCalled();
     });
 
-    it('throws ForbiddenException when a non-admin tries to move the department to a different org', async () => {
-      mockPrisma.department.findUnique.mockResolvedValue(existing);
-
-      await expect(
-        service.update('abc', { organizationId: 'org2' }, ownUser as any),
-      ).rejects.toThrow(ForbiddenException);
-      expect(mockPrisma.department.update).not.toHaveBeenCalled();
-    });
-
     it('throws ConflictException when another department has the same name in the org', async () => {
       const conflict = { id: 'xyz', name: 'Eng' };
       mockPrisma.department.findUnique.mockResolvedValue(existing);
@@ -385,6 +396,39 @@ describe('DepartmentService', () => {
         service.update('abc', { managerId: 'missing-emp' }, ownUser as any),
       ).rejects.toThrow(NotFoundException);
       expect(mockPrisma.department.update).not.toHaveBeenCalled();
+    });
+
+    it('also adds the new manager to the department as an employee', async () => {
+      mockPrisma.department.findUnique.mockResolvedValue(existing);
+      mockPrisma.department.findFirst.mockResolvedValue(null);
+      mockPrisma.employee.findUnique.mockResolvedValue({
+        id: 'emp1',
+        organizationId: 'org1',
+      });
+      mockPrisma.department.update.mockResolvedValue({
+        ...existing,
+        managerId: 'emp1',
+      });
+
+      await service.update('abc', { managerId: 'emp1' }, ownUser as any);
+
+      expect(mockPrisma.employee.update).toHaveBeenCalledWith({
+        where: { id: 'emp1' },
+        data: { departmentId: 'abc' },
+      });
+    });
+
+    it('does not touch the employee table when managerId is not in the payload', async () => {
+      mockPrisma.department.findUnique.mockResolvedValue(existing);
+      mockPrisma.department.findFirst.mockResolvedValue(null);
+      mockPrisma.department.update.mockResolvedValue({
+        ...existing,
+        name: 'Eng',
+      });
+
+      await service.update('abc', { name: 'Eng' }, ownUser as any);
+
+      expect(mockPrisma.employee.update).not.toHaveBeenCalled();
     });
   });
 

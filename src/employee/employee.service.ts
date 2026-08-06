@@ -12,6 +12,8 @@ import { CreateEmployeeDto } from './dto/create-employee.dto.ts';
 import { UpdateEmployeeDto } from './dto/update-employee.dto.ts';
 import { CreateEmployeeContractDto } from './dto/create-employee-contract.dto.ts';
 import { CreateEmployeeDocumentDto } from './dto/create-employee-document.dto.ts';
+import { CreateEmployeeAllowanceDto } from './dto/create-employee-allowance.dto.ts';
+import { UpdateEmployeeAllowanceDto } from './dto/update-employee-allowance.dto.ts';
 import { UpdateMyProfileDto } from './dto/update-my-profile.dto.ts';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface.ts';
 import {
@@ -28,13 +30,14 @@ export class EmployeeService {
     private readonly s3: S3Service,
   ) {}
 
-  private toEmployeeData<T extends { dateOfBirth?: string; hireDate?: string }>(
-    dto: T,
-  ) {
+  private toEmployeeData<
+    T extends { dateOfBirth?: string; hireDate?: string; visaEndDate?: string },
+  >(dto: T) {
     return {
       ...dto,
       dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
       hireDate: dto.hireDate ? new Date(dto.hireDate) : undefined,
+      visaEndDate: dto.visaEndDate ? new Date(dto.visaEndDate) : undefined,
     };
   }
 
@@ -95,28 +98,35 @@ export class EmployeeService {
     }
   }
 
-  async create(dto: CreateEmployeeDto, user: AuthenticatedUser) {
-    if (
-      user.role !== Role.ADMIN &&
-      dto.organizationId !== user.organizationId
-    ) {
-      throw new ForbiddenException(
-        'You can only create employees in your own organization',
+  /** An end client must be a real end client in the same organization. */
+  private async assertValidEndClient(
+    endClientId: string,
+    organizationId: string,
+  ) {
+    const endClient = await this.prisma.endClient.findUnique({
+      where: { id: endClientId },
+    });
+    if (!endClient) {
+      throw new NotFoundException(`End client ${endClientId} not found`);
+    }
+    if (endClient.organizationId !== organizationId) {
+      throw new BadRequestException(
+        'End client must belong to the same organization',
       );
     }
+  }
+
+  async create(dto: CreateEmployeeDto, user: AuthenticatedUser) {
+    if (!user.organizationId) {
+      throw new ForbiddenException(
+        'User is not associated with an organization',
+      );
+    }
+    const organizationId = user.organizationId;
 
     if (dto.role && dto.role !== Role.EMPLOYEE && user.role !== Role.ADMIN) {
       throw new ForbiddenException(
         'Only an admin can assign a role other than EMPLOYEE',
-      );
-    }
-
-    const organization = await this.prisma.organization.findUnique({
-      where: { id: dto.organizationId },
-    });
-    if (!organization) {
-      throw new NotFoundException(
-        `Organization ${dto.organizationId} not found`,
       );
     }
 
@@ -145,41 +155,29 @@ export class EmployeeService {
     }
 
     if (dto.managerId) {
-      await this.assertValidManager(dto.managerId, dto.organizationId);
+      await this.assertValidManager(dto.managerId, organizationId);
     }
 
     if (dto.departmentId) {
-      await this.assertValidDepartment(dto.departmentId, dto.organizationId);
+      await this.assertValidDepartment(dto.departmentId, organizationId);
+    }
+
+    if (dto.endClientId) {
+      await this.assertValidEndClient(dto.endClientId, organizationId);
     }
 
     const temporaryPassword = this.generateTemporaryPassword();
     const passwordHash = await bcrypt.hash(temporaryPassword, 10);
 
-    return this.prisma.$transaction(async (tx) => {
-      const employee = await tx.employee.create({
-        data: {
-          ...this.toEmployeeData(dto),
-          role: dto.role ?? Role.EMPLOYEE,
-          passwordHash,
-        },
-      });
-      const leaveTypes = await tx.leaveType.findMany({
-        where: { organizationId: employee.organizationId },
-      });
-      if (leaveTypes.length) {
-        await tx.leaveBalance.createMany({
-          data: leaveTypes.map((leaveType) => ({
-            employeeId: employee.id,
-            leaveTypeId: leaveType.id,
-            year: new Date().getFullYear(),
-            totalDays: leaveType.daysPerYear,
-            usedDays: 0,
-            remainingDays: leaveType.daysPerYear,
-          })),
-        });
-      }
-      return { ...employee, temporaryPassword };
+    const employee = await this.prisma.employee.create({
+      data: {
+        ...this.toEmployeeData(dto),
+        organizationId,
+        role: dto.role ?? Role.EMPLOYEE,
+        passwordHash,
+      },
     });
+    return { ...employee, temporaryPassword };
   }
 
   async findAll(
@@ -236,6 +234,34 @@ export class EmployeeService {
     }));
   }
 
+  /**
+   * Cumulative headcount at the end of each month of `year`, counting employees
+   * hired on or before that month end. Departures aren't tracked with a date
+   * (only a current `status`), so this reflects hires-to-date rather than
+   * factoring in attrition.
+   */
+  async getMonthlyHeadcount(user: AuthenticatedUser, year: number) {
+    if (!user.organizationId) {
+      throw new ForbiddenException(
+        'User is not associated with an organization',
+      );
+    }
+
+    const employees = await this.prisma.employee.findMany({
+      where: {
+        organizationId: user.organizationId,
+        hireDate: { lt: new Date(Date.UTC(year + 1, 0, 1)) },
+      },
+      select: { hireDate: true },
+    });
+
+    return Array.from({ length: 12 }, (_, i) => {
+      const monthEnd = new Date(Date.UTC(year, i + 1, 1));
+      const count = employees.filter((e) => e.hireDate < monthEnd).length;
+      return { month: i + 1, count };
+    });
+  }
+
   async findOne(id: string, user: AuthenticatedUser) {
     const employee = await this.prisma.employee.findUnique({ where: { id } });
     if (!employee) throw new NotFoundException(`Employee ${id} not found`);
@@ -270,18 +296,13 @@ export class EmployeeService {
     return employee;
   }
 
-  async update(id: string, dto: UpdateEmployeeDto, user: AuthenticatedUser) {
+  async update(
+    id: string,
+    dto: UpdateEmployeeDto,
+    user: AuthenticatedUser,
+    file?: Express.Multer.File,
+  ) {
     const employee = await this.findOne(id, user);
-
-    if (
-      dto.organizationId &&
-      dto.organizationId !== employee.organizationId &&
-      user.role !== Role.ADMIN
-    ) {
-      throw new ForbiddenException(
-        'Cannot move an employee to a different organization',
-      );
-    }
 
     if (dto.employeeCode || dto.email || dto.identificationNumber) {
       const conflict = await this.prisma.employee.findFirst({
@@ -308,13 +329,18 @@ export class EmployeeService {
     }
 
     if (dto.managerId) {
-      const targetOrgId = dto.organizationId ?? employee.organizationId;
-      await this.assertValidManager(dto.managerId, targetOrgId, id);
+      await this.assertValidManager(dto.managerId, employee.organizationId, id);
     }
 
     if (dto.departmentId) {
-      const targetOrgId = dto.organizationId ?? employee.organizationId;
-      await this.assertValidDepartment(dto.departmentId, targetOrgId);
+      await this.assertValidDepartment(
+        dto.departmentId,
+        employee.organizationId,
+      );
+    }
+
+    if (dto.endClientId) {
+      await this.assertValidEndClient(dto.endClientId, employee.organizationId);
     }
 
     if (dto.countryId) {
@@ -326,9 +352,23 @@ export class EmployeeService {
       }
     }
 
+    let profilePicture: string | undefined;
+    if (file) {
+      const extension = file.originalname.split('.').pop() ?? 'jpg';
+      const key = `employees/${id}/profile-picture-${Date.now()}.${extension}`;
+      profilePicture = await this.s3.uploadFile(
+        file.buffer,
+        key,
+        file.mimetype,
+      );
+    }
+
     return this.prisma.employee.update({
       where: { id },
-      data: this.toEmployeeData(dto),
+      data: {
+        ...this.toEmployeeData(dto),
+        ...(profilePicture !== undefined ? { profilePicture } : {}),
+      },
     });
   }
 
@@ -366,22 +406,43 @@ export class EmployeeService {
 
   async remove(id: string, user: AuthenticatedUser) {
     const employee = await this.findOne(id, user);
-    if (employee.status !== EmploymentStatus.INACTIVE) {
-      throw new ConflictException('Only inactive employees can be deleted');
+    if (
+      employee.status !== EmploymentStatus.INACTIVE &&
+      employee.status !== EmploymentStatus.TERMINATED
+    ) {
+      throw new ConflictException(
+        'Only inactive or terminated employees can be deleted',
+      );
     }
     return this.prisma.employee.delete({ where: { id } });
+  }
+
+  /** Uploads a file to S3 under `employees/{employeeId}/{folder}/{timestamp}.{ext}`. */
+  private async uploadEmployeeFile(
+    employeeId: string,
+    folder: string,
+    file: Express.Multer.File,
+  ): Promise<string> {
+    const extension = file.originalname.split('.').pop() ?? 'bin';
+    const key = `employees/${employeeId}/${folder}/${Date.now()}.${extension}`;
+    return this.s3.uploadFile(file.buffer, key, file.mimetype);
   }
 
   async addContract(
     employeeId: string,
     dto: CreateEmployeeContractDto,
     user: AuthenticatedUser,
+    file?: Express.Multer.File,
   ) {
     await this.findOne(employeeId, user);
+    const fileUrl = file
+      ? await this.uploadEmployeeFile(employeeId, 'contracts', file)
+      : dto.fileUrl;
     return this.prisma.employeeContract.create({
       data: {
         ...dto,
         employeeId,
+        fileUrl,
         startDate: new Date(dto.startDate),
         endDate: dto.endDate ? new Date(dto.endDate) : undefined,
       },
@@ -400,10 +461,19 @@ export class EmployeeService {
     employeeId: string,
     dto: CreateEmployeeDocumentDto,
     user: AuthenticatedUser,
+    file?: Express.Multer.File,
   ) {
     await this.findOne(employeeId, user);
+    const fileUrl = file
+      ? await this.uploadEmployeeFile(employeeId, 'documents', file)
+      : dto.fileUrl;
+    if (!fileUrl) {
+      throw new BadRequestException(
+        'Either a file upload or fileUrl is required',
+      );
+    }
     return this.prisma.employeeDocument.create({
-      data: { ...dto, employeeId },
+      data: { ...dto, employeeId, fileUrl },
     });
   }
 
@@ -413,5 +483,62 @@ export class EmployeeService {
       where: { employeeId },
       orderBy: { uploadedAt: 'desc' },
     });
+  }
+
+  async addAllowance(
+    employeeId: string,
+    dto: CreateEmployeeAllowanceDto,
+    user: AuthenticatedUser,
+  ) {
+    await this.findOne(employeeId, user);
+    return this.prisma.employeeAllowance.create({
+      data: { ...dto, employeeId },
+    });
+  }
+
+  async listAllowances(employeeId: string, user: AuthenticatedUser) {
+    await this.findOne(employeeId, user);
+    return this.prisma.employeeAllowance.findMany({
+      where: { employeeId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /** Fetches an allowance, enforcing both org access and that it belongs to the given employee. */
+  private async findAllowance(
+    employeeId: string,
+    allowanceId: string,
+    user: AuthenticatedUser,
+  ) {
+    await this.findOne(employeeId, user);
+    const allowance = await this.prisma.employeeAllowance.findUnique({
+      where: { id: allowanceId },
+    });
+    if (!allowance || allowance.employeeId !== employeeId) {
+      throw new NotFoundException(`Allowance ${allowanceId} not found`);
+    }
+    return allowance;
+  }
+
+  async updateAllowance(
+    employeeId: string,
+    allowanceId: string,
+    dto: UpdateEmployeeAllowanceDto,
+    user: AuthenticatedUser,
+  ) {
+    await this.findAllowance(employeeId, allowanceId, user);
+    return this.prisma.employeeAllowance.update({
+      where: { id: allowanceId },
+      data: dto,
+    });
+  }
+
+  async removeAllowance(
+    employeeId: string,
+    allowanceId: string,
+    user: AuthenticatedUser,
+  ) {
+    await this.findAllowance(employeeId, allowanceId, user);
+    return this.prisma.employeeAllowance.delete({ where: { id: allowanceId } });
   }
 }

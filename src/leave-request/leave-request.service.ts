@@ -10,14 +10,41 @@ import { CreateLeaveRequestDto } from './dto/create-leave-request.dto.ts';
 import { ReviewLeaveRequestDto } from './dto/review-leave-request.dto.ts';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface.ts';
 import { LeaveStatus, Role } from '../../generated/prisma/enums.js';
+import { S3Service } from '../upload/s3.service.ts';
 
 @Injectable()
 export class LeaveRequestService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly s3: S3Service,
+  ) {}
 
-  private calculateTotalDays(startDate: Date, endDate: Date): number {
-    const msPerDay = 24 * 60 * 60 * 1000;
-    return Math.round((endDate.getTime() - startDate.getTime()) / msPerDay) + 1;
+  /** Counts working days (inclusive), excluding weekends and the employee's country's public holidays. */
+  private async calculateTotalDays(
+    startDate: Date,
+    endDate: Date,
+    countryId: string,
+  ): Promise<number> {
+    const holidays = await this.prisma.publicHoliday.findMany({
+      where: { countryId, date: { gte: startDate, lte: endDate } },
+      select: { date: true },
+    });
+    const holidayDates = new Set(
+      holidays.map((holiday) => holiday.date.toISOString().slice(0, 10)),
+    );
+
+    let totalDays = 0;
+    const cursor = new Date(startDate);
+    while (cursor.getTime() <= endDate.getTime()) {
+      const dayOfWeek = cursor.getUTCDay();
+      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+      const isHoliday = holidayDates.has(cursor.toISOString().slice(0, 10));
+      if (!isWeekend && !isHoliday) {
+        totalDays++;
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return totalDays;
   }
 
   /** Non-admins are confined to leave requests for employees in their own organization. */
@@ -30,6 +57,29 @@ export class LeaveRequestService {
       leaveRequest.employee.organizationId !== user.organizationId
     ) {
       throw new NotFoundException(`Leave request ${leaveRequest.id} not found`);
+    }
+  }
+
+  /** Reviewer must be an admin, HR manager, or the requester's own manager — never the requester themself. */
+  private assertCanReview(
+    leaveRequest: {
+      employeeId: string;
+      employee: { managerId: string | null };
+    },
+    user: AuthenticatedUser,
+  ) {
+    if (leaveRequest.employeeId === user.id) {
+      throw new ForbiddenException('You cannot review your own leave request');
+    }
+    const isOwnManager = leaveRequest.employee.managerId === user.id;
+    if (
+      user.role !== Role.ADMIN &&
+      user.role !== Role.HR_MANAGER &&
+      !isOwnManager
+    ) {
+      throw new ForbiddenException(
+        "Only an admin, HR manager, or the employee's manager can review this request",
+      );
     }
   }
 
@@ -49,7 +99,11 @@ export class LeaveRequestService {
     return leaveRequest;
   }
 
-  async create(dto: CreateLeaveRequestDto, user: AuthenticatedUser) {
+  async create(
+    dto: CreateLeaveRequestDto,
+    user: AuthenticatedUser,
+    files: Express.Multer.File[] = [],
+  ) {
     const employee = await this.prisma.employee.findUnique({
       where: { id: dto.employeeId },
     });
@@ -89,14 +143,34 @@ export class LeaveRequestService {
       throw new BadRequestException('endDate must not be before startDate');
     }
 
+    const totalDays = await this.calculateTotalDays(
+      startDate,
+      endDate,
+      employee.countryId,
+    );
+    if (totalDays <= 0) {
+      throw new BadRequestException(
+        'Leave request must include at least one working day (excluding weekends and public holidays)',
+      );
+    }
+
+    const attachmentUrls = await Promise.all(
+      files.map((file, index) => {
+        const extension = file.originalname.split('.').pop() ?? 'jpg';
+        const key = `leave-requests/${dto.employeeId}/${Date.now()}-${index}.${extension}`;
+        return this.s3.uploadFile(file.buffer, key, file.mimetype);
+      }),
+    );
+
     return this.prisma.leaveRequest.create({
       data: {
         employeeId: dto.employeeId,
         leaveTypeId: dto.leaveTypeId,
         startDate,
         endDate,
-        totalDays: this.calculateTotalDays(startDate, endDate),
+        totalDays,
         reason: dto.reason,
+        attachmentUrls,
       },
     });
   }
@@ -164,6 +238,7 @@ export class LeaveRequestService {
     user: AuthenticatedUser,
   ) {
     const leaveRequest = await this.findWithRelations(id, user);
+    this.assertCanReview(leaveRequest, user);
     if (leaveRequest.status !== LeaveStatus.PENDING) {
       throw new ConflictException(
         'Only pending leave requests can be approved',
@@ -217,6 +292,7 @@ export class LeaveRequestService {
     user: AuthenticatedUser,
   ) {
     const leaveRequest = await this.findWithRelations(id, user);
+    this.assertCanReview(leaveRequest, user);
     if (leaveRequest.status !== LeaveStatus.PENDING) {
       throw new ConflictException(
         'Only pending leave requests can be rejected',

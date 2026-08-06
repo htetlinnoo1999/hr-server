@@ -18,10 +18,6 @@ import {
 } from '../../../generated/prisma/enums.js';
 
 export class CreateEmployeeDto {
-  @ApiProperty({ description: 'Organization this employee belongs to' })
-  @IsString()
-  organizationId: string;
-
   @ApiProperty({ example: 'EMP-0001', description: 'Unique employee code' })
   @IsString()
   employeeCode: string;
@@ -87,6 +83,14 @@ export class CreateEmployeeDto {
   @IsString()
   identificationNumber?: string;
 
+  @ApiPropertyOptional({
+    example: '2027-06-30',
+    description: 'Visa expiry date (ISO 8601), if applicable',
+  })
+  @IsOptional()
+  @IsDateString()
+  visaEndDate?: string;
+
   @ApiProperty({
     description:
       'Country this employee belongs to (for public holiday calendar)',
@@ -147,6 +151,14 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsString()
   positionId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'End client this employee is placed at (for contractors/temps). Must belong to the same organization.',
+  })
+  @IsOptional()
+  @IsString()
+  endClientId?: string;
 
   @ApiPropertyOptional({
     description:

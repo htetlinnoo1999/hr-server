@@ -31,7 +31,10 @@ export class CreateLeaveTypeDto {
   @IsBoolean()
   carryForward?: boolean;
 
-  @ApiPropertyOptional({ default: 0, description: 'Max days that can be carried into the next year' })
+  @ApiPropertyOptional({
+    default: 0,
+    description: 'Max days that can be carried into the next year',
+  })
   @IsOptional()
   @IsInt()
   @Min(0)
@@ -39,7 +42,8 @@ export class CreateLeaveTypeDto {
 
   @ApiPropertyOptional({
     enum: Gender,
-    description: 'Restrict this leave type to employees of this gender (e.g. Maternal → FEMALE). Omit for no restriction.',
+    description:
+      'Restrict this leave type to employees of this gender (e.g. Maternal → FEMALE). Omit for no restriction.',
   })
   @IsOptional()
   @IsEnum(Gender)

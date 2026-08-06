@@ -143,17 +143,17 @@ describe('LeaveTypeService', () => {
     it('throws NotFoundException when the leave type does not exist', async () => {
       mockPrisma.leaveType.findUnique.mockResolvedValue(null);
 
-      await expect(
-        service.findOne('missing', hrUser as any),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.findOne('missing', hrUser as any)).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('throws NotFoundException when the leave type belongs to another organization', async () => {
       mockPrisma.leaveType.findUnique.mockResolvedValue(leaveType);
 
-      await expect(
-        service.findOne('lt1', otherOrgUser as any),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.findOne('lt1', otherOrgUser as any)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 

@@ -15,6 +15,7 @@ const mockPrisma = {
   },
   leaveType: {
     findUnique: jest.fn<any>(),
+    findMany: jest.fn<any>(),
   },
   leaveBalance: {
     findFirst: jest.fn<any>(),
@@ -23,6 +24,8 @@ const mockPrisma = {
     count: jest.fn<any>(),
     findUnique: jest.fn<any>(),
     update: jest.fn<any>(),
+    createMany: jest.fn<any>(),
+    createManyAndReturn: jest.fn<any>(),
   },
 };
 
@@ -43,6 +46,12 @@ const otherOrgUser = {
   email: 'hr@other.com',
   role: 'HR_MANAGER',
   organizationId: 'org2',
+};
+const orglessUser = {
+  id: 'u-none',
+  email: 'nobody@x.com',
+  role: 'HR_MANAGER',
+  organizationId: null,
 };
 
 describe('LeaveBalanceService', () => {
@@ -103,9 +112,9 @@ describe('LeaveBalanceService', () => {
     it('throws NotFoundException when the employee does not exist', async () => {
       mockPrisma.employee.findUnique.mockResolvedValue(null);
 
-      await expect(
-        service.create(dto as any, hrUser as any),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.create(dto as any, hrUser as any)).rejects.toThrow(
+        NotFoundException,
+      );
       expect(mockPrisma.leaveBalance.create).not.toHaveBeenCalled();
     });
 
@@ -122,9 +131,9 @@ describe('LeaveBalanceService', () => {
       mockPrisma.employee.findUnique.mockResolvedValue(employee);
       mockPrisma.leaveType.findUnique.mockResolvedValue(null);
 
-      await expect(
-        service.create(dto as any, hrUser as any),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.create(dto as any, hrUser as any)).rejects.toThrow(
+        NotFoundException,
+      );
       expect(mockPrisma.leaveBalance.create).not.toHaveBeenCalled();
     });
 
@@ -135,9 +144,9 @@ describe('LeaveBalanceService', () => {
         organizationId: 'org2',
       });
 
-      await expect(
-        service.create(dto as any, hrUser as any),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.create(dto as any, hrUser as any)).rejects.toThrow(
+        BadRequestException,
+      );
       expect(mockPrisma.leaveBalance.create).not.toHaveBeenCalled();
     });
 
@@ -146,10 +155,147 @@ describe('LeaveBalanceService', () => {
       mockPrisma.leaveType.findUnique.mockResolvedValue(leaveType);
       mockPrisma.leaveBalance.findFirst.mockResolvedValue({ id: 'existing' });
 
-      await expect(
-        service.create(dto as any, hrUser as any),
-      ).rejects.toThrow(ConflictException);
+      await expect(service.create(dto as any, hrUser as any)).rejects.toThrow(
+        ConflictException,
+      );
       expect(mockPrisma.leaveBalance.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // bulkCreate
+  // ---------------------------------------------------------------------------
+  describe('bulkCreate', () => {
+    const dto = {
+      employeeId: 'emp1',
+      year: 2026,
+      balances: [
+        { leaveTypeId: 'lt-sick', totalDays: 30 },
+        { leaveTypeId: 'lt-annual', totalDays: 10 },
+      ],
+    };
+    const employee = { id: 'emp1', organizationId: 'org1' };
+    const leaveTypes = [
+      { id: 'lt-sick', organizationId: 'org1' },
+      { id: 'lt-annual', organizationId: 'org1' },
+    ];
+
+    it('creates one balance per leave type in a single call', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(employee);
+      mockPrisma.leaveType.findMany.mockResolvedValue(leaveTypes);
+      const createdRows = [
+        { id: 'b1', employeeId: 'emp1', leaveTypeId: 'lt-sick', year: 2026 },
+        { id: 'b2', employeeId: 'emp1', leaveTypeId: 'lt-annual', year: 2026 },
+      ];
+      mockPrisma.leaveBalance.createManyAndReturn.mockResolvedValue(
+        createdRows,
+      );
+
+      const result = await service.bulkCreate(dto as any, hrUser as any);
+
+      expect(mockPrisma.leaveType.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ['lt-sick', 'lt-annual'] } },
+      });
+      expect(mockPrisma.leaveBalance.createManyAndReturn).toHaveBeenCalledWith(
+        {
+          data: [
+            {
+              employeeId: 'emp1',
+              leaveTypeId: 'lt-sick',
+              year: 2026,
+              totalDays: 30,
+              usedDays: 0,
+              remainingDays: 30,
+            },
+            {
+              employeeId: 'emp1',
+              leaveTypeId: 'lt-annual',
+              year: 2026,
+              totalDays: 10,
+              usedDays: 0,
+              remainingDays: 10,
+            },
+          ],
+          skipDuplicates: true,
+        },
+      );
+      expect(result).toEqual({
+        created: 2,
+        skipped: 0,
+        data: createdRows,
+      });
+    });
+
+    it('reports skipped balances that already existed', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(employee);
+      mockPrisma.leaveType.findMany.mockResolvedValue(leaveTypes);
+      mockPrisma.leaveBalance.createManyAndReturn.mockResolvedValue([
+        { id: 'b1', leaveTypeId: 'lt-sick' },
+      ]);
+
+      const result = await service.bulkCreate(dto as any, hrUser as any);
+
+      expect(result.created).toBe(1);
+      expect(result.skipped).toBe(1);
+    });
+
+    it('throws NotFoundException when the employee does not exist', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.bulkCreate(dto as any, hrUser as any),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockPrisma.leaveBalance.createManyAndReturn).not.toHaveBeenCalled();
+    });
+
+    it('throws ForbiddenException when a non-admin creates for an employee outside their org', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(employee);
+
+      await expect(
+        service.bulkCreate(dto as any, otherOrgUser as any),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockPrisma.leaveBalance.createManyAndReturn).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when the same leave type appears twice', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(employee);
+
+      await expect(
+        service.bulkCreate(
+          {
+            ...dto,
+            balances: [
+              { leaveTypeId: 'lt-sick', totalDays: 30 },
+              { leaveTypeId: 'lt-sick', totalDays: 5 },
+            ],
+          } as any,
+          hrUser as any,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrisma.leaveBalance.createManyAndReturn).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when a leave type does not exist', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(employee);
+      mockPrisma.leaveType.findMany.mockResolvedValue([leaveTypes[0]]);
+
+      await expect(
+        service.bulkCreate(dto as any, hrUser as any),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockPrisma.leaveBalance.createManyAndReturn).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when a leave type belongs to another organization', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(employee);
+      mockPrisma.leaveType.findMany.mockResolvedValue([
+        leaveTypes[0],
+        { id: 'lt-annual', organizationId: 'org2' },
+      ]);
+
+      await expect(
+        service.bulkCreate(dto as any, hrUser as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrisma.leaveBalance.createManyAndReturn).not.toHaveBeenCalled();
     });
   });
 
@@ -227,17 +373,17 @@ describe('LeaveBalanceService', () => {
     it('throws NotFoundException when the balance does not exist', async () => {
       mockPrisma.leaveBalance.findUnique.mockResolvedValue(null);
 
-      await expect(
-        service.findOne('missing', hrUser as any),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.findOne('missing', hrUser as any)).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('throws NotFoundException when the balance belongs to another organization', async () => {
       mockPrisma.leaveBalance.findUnique.mockResolvedValue(balance);
 
-      await expect(
-        service.findOne('b1', otherOrgUser as any),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.findOne('b1', otherOrgUser as any)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -270,6 +416,102 @@ describe('LeaveBalanceService', () => {
         data: { totalDays: 20, remainingDays: 15 },
       });
       expect(result.remainingDays).toBe(15);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // rollover
+  // ---------------------------------------------------------------------------
+  describe('rollover', () => {
+    const dto = { fromYear: 2026, toYear: 2027 };
+
+    it('carries forward days up to maxCarryDays for carryForward-enabled leave types', async () => {
+      mockPrisma.leaveBalance.findMany.mockResolvedValue([
+        {
+          employeeId: 'emp1',
+          leaveTypeId: 'lt-annual',
+          remainingDays: 6,
+          leaveType: {
+            daysPerYear: 14,
+            carryForward: true,
+            maxCarryDays: 5,
+          },
+        },
+        {
+          employeeId: 'emp1',
+          leaveTypeId: 'lt-sick',
+          remainingDays: 8,
+          leaveType: {
+            daysPerYear: 10,
+            carryForward: false,
+            maxCarryDays: 0,
+          },
+        },
+      ]);
+      mockPrisma.leaveBalance.createMany.mockResolvedValue({ count: 2 });
+
+      const result = await service.rollover(dto as any, hrUser as any);
+
+      expect(mockPrisma.leaveBalance.findMany).toHaveBeenCalledWith({
+        where: { year: 2026, employee: { organizationId: 'org1' } },
+        include: { leaveType: true },
+      });
+      expect(mockPrisma.leaveBalance.createMany).toHaveBeenCalledWith({
+        data: [
+          {
+            employeeId: 'emp1',
+            leaveTypeId: 'lt-annual',
+            year: 2027,
+            totalDays: 19, // 14 + min(6, 5) carried over
+            usedDays: 0,
+            remainingDays: 19,
+          },
+          {
+            employeeId: 'emp1',
+            leaveTypeId: 'lt-sick',
+            year: 2027,
+            totalDays: 10, // carryForward disabled
+            usedDays: 0,
+            remainingDays: 10,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      expect(result).toEqual({ created: 2 });
+    });
+
+    it('returns created: 0 without calling createMany when there is nothing to roll over', async () => {
+      mockPrisma.leaveBalance.findMany.mockResolvedValue([]);
+
+      const result = await service.rollover(dto as any, hrUser as any);
+
+      expect(mockPrisma.leaveBalance.createMany).not.toHaveBeenCalled();
+      expect(result).toEqual({ created: 0 });
+    });
+
+    it('throws ForbiddenException when the caller has no organization', async () => {
+      await expect(
+        service.rollover(dto as any, orglessUser as any),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockPrisma.leaveBalance.findMany).not.toHaveBeenCalled();
+    });
+
+    it('rolls over the organization derived from the caller', async () => {
+      mockPrisma.leaveBalance.findMany.mockResolvedValue([]);
+
+      await service.rollover(dto as any, adminUser as any);
+
+      expect(mockPrisma.leaveBalance.findMany).toHaveBeenCalledWith({
+        where: { year: 2026, employee: { organizationId: 'org1' } },
+        include: { leaveType: true },
+      });
+    });
+
+    it('throws BadRequestException when toYear is not exactly one year after fromYear', async () => {
+      await expect(
+        service.rollover({ ...dto, toYear: 2029 } as any, hrUser as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrisma.leaveBalance.findMany).not.toHaveBeenCalled();
     });
   });
 });

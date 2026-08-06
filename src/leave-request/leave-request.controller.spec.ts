@@ -44,10 +44,25 @@ describe('LeaveRequestController', () => {
       const created = { id: '1', ...dto, status: 'PENDING' };
       mockService.create.mockResolvedValue(created);
 
-      const result = await controller.create(dto as any, user as any);
+      const result = await controller.create(dto as any, [], user as any);
 
-      expect(mockService.create).toHaveBeenCalledWith(dto, user);
+      expect(mockService.create).toHaveBeenCalledWith(dto, user, []);
       expect(result).toEqual(created);
+    });
+
+    it('passes uploaded attachment files through to service.create', async () => {
+      const dto = {
+        employeeId: 'emp1',
+        leaveTypeId: 'lt-annual',
+        startDate: '2026-08-01',
+        endDate: '2026-08-03',
+      };
+      const files = [{ originalname: 'a.jpg' }];
+      mockService.create.mockResolvedValue({ id: '1' });
+
+      await controller.create(dto as any, files as any, user as any);
+
+      expect(mockService.create).toHaveBeenCalledWith(dto, user, files);
     });
   });
 

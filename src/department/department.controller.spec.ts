@@ -34,8 +34,8 @@ describe('DepartmentController', () => {
 
   describe('create', () => {
     it('delegates to service.create with the provided dto and current user', async () => {
-      const dto = { organizationId: 'org1', name: 'Engineering' };
-      const created = { id: '1', ...dto };
+      const dto = { name: 'Engineering' };
+      const created = { id: '1', ...dto, organizationId: 'org1' };
       mockService.create.mockResolvedValue(created);
 
       const result = await controller.create(dto as any, user as any);

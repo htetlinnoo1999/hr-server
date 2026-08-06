@@ -2,10 +2,6 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsOptional, MinLength } from 'class-validator';
 
 export class CreateDepartmentDto {
-  @ApiProperty({ description: 'Organization this department belongs to' })
-  @IsString()
-  organizationId: string;
-
   @ApiProperty({ example: 'Engineering' })
   @IsString()
   @MinLength(1)

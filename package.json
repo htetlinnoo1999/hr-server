@@ -20,7 +20,8 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "db:seed": "node --loader ts-node/esm prisma/seed.ts",
-    "db:seed:countries": "node --loader ts-node/esm prisma/seed-countries.ts"
+    "db:seed:countries": "node --loader ts-node/esm prisma/seed-countries.ts",
+    "db:seed:holidays:th": "node --loader ts-node/esm prisma/seed-holidays-th.ts"
   },
   "prisma": {
     "seed": "node --loader ts-node/esm prisma/seed.ts"

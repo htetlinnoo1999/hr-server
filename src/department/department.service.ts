@@ -57,26 +57,15 @@ export class DepartmentService {
   }
 
   async create(dto: CreateDepartmentDto, user: AuthenticatedUser) {
-    if (
-      user.role !== Role.ADMIN &&
-      dto.organizationId !== user.organizationId
-    ) {
+    if (!user.organizationId) {
       throw new ForbiddenException(
-        'You can only create departments in your own organization',
+        'User is not associated with an organization',
       );
     }
-
-    const organization = await this.prisma.organization.findUnique({
-      where: { id: dto.organizationId },
-    });
-    if (!organization) {
-      throw new NotFoundException(
-        `Organization ${dto.organizationId} not found`,
-      );
-    }
+    const organizationId = user.organizationId;
 
     const existing = await this.prisma.department.findFirst({
-      where: { name: dto.name, organizationId: dto.organizationId },
+      where: { name: dto.name, organizationId },
     });
     if (existing) {
       throw new ConflictException(
@@ -85,10 +74,21 @@ export class DepartmentService {
     }
 
     if (dto.managerId) {
-      await this.assertValidManager(dto.managerId, dto.organizationId);
+      await this.assertValidManager(dto.managerId, organizationId);
     }
 
-    return this.prisma.department.create({ data: dto });
+    return this.prisma.$transaction(async (tx) => {
+      const department = await tx.department.create({
+        data: { ...dto, organizationId },
+      });
+      if (dto.managerId) {
+        await tx.employee.update({
+          where: { id: dto.managerId },
+          data: { departmentId: department.id },
+        });
+      }
+      return department;
+    });
   }
 
   async findAll(
@@ -131,22 +131,12 @@ export class DepartmentService {
   async update(id: string, dto: UpdateDepartmentDto, user: AuthenticatedUser) {
     const department = await this.findOne(id, user);
 
-    if (
-      dto.organizationId &&
-      dto.organizationId !== department.organizationId &&
-      user.role !== Role.ADMIN
-    ) {
-      throw new ForbiddenException(
-        'Cannot move a department to a different organization',
-      );
-    }
-
     if (dto.name) {
       const conflict = await this.prisma.department.findFirst({
         where: {
           id: { not: id },
           name: dto.name,
-          organizationId: dto.organizationId ?? department.organizationId,
+          organizationId: department.organizationId,
         },
       });
       if (conflict) {
@@ -157,11 +147,23 @@ export class DepartmentService {
     }
 
     if (dto.managerId) {
-      const targetOrgId = dto.organizationId ?? department.organizationId;
-      await this.assertValidManager(dto.managerId, targetOrgId, id);
+      await this.assertValidManager(
+        dto.managerId,
+        department.organizationId,
+        id,
+      );
     }
 
-    return this.prisma.department.update({ where: { id }, data: dto });
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.department.update({ where: { id }, data: dto });
+      if (dto.managerId) {
+        await tx.employee.update({
+          where: { id: dto.managerId },
+          data: { departmentId: updated.id },
+        });
+      }
+      return updated;
+    });
   }
 
   async remove(id: string, user: AuthenticatedUser) {

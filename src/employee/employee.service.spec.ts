@@ -24,6 +24,9 @@ const mockPrisma = {
   department: {
     findUnique: jest.fn<any>(),
   },
+  endClient: {
+    findUnique: jest.fn<any>(),
+  },
   employee: {
     findFirst: jest.fn<any>(),
     create: jest.fn<any>(),
@@ -40,6 +43,13 @@ const mockPrisma = {
   employeeDocument: {
     create: jest.fn<any>(),
     findMany: jest.fn<any>(),
+  },
+  employeeAllowance: {
+    create: jest.fn<any>(),
+    findMany: jest.fn<any>(),
+    findUnique: jest.fn<any>(),
+    update: jest.fn<any>(),
+    delete: jest.fn<any>(),
   },
   leaveType: {
     findMany: jest.fn<any>(),
@@ -100,7 +110,6 @@ describe('EmployeeService', () => {
   // ---------------------------------------------------------------------------
   describe('create', () => {
     const dto = {
-      organizationId: 'org1',
       employeeCode: 'EMP-1',
       firstName: 'Jane',
       lastName: 'Doe',
@@ -108,25 +117,39 @@ describe('EmployeeService', () => {
       salary: 1000,
       countryId: 'country1',
     };
-    const created = { id: '1', ...dto };
+    const currentYear = new Date().getFullYear();
+    const created = {
+      id: '1',
+      ...dto,
+      organizationId: 'org1',
+      hireDate: new Date(currentYear, 0, 1),
+    };
 
-    it('creates and returns an employee when the org exists and no conflicts', async () => {
-      mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
+    it("creates an employee in the caller's own organization when no conflicts", async () => {
       mockPrisma.employee.findFirst.mockResolvedValue(null);
       mockPrisma.employee.create.mockResolvedValue(created);
 
       const result = await service.create(dto as any, hrUser as any);
 
-      expect(mockPrisma.organization.findUnique).toHaveBeenCalledWith({
-        where: { id: 'org1' },
-      });
       expect(mockPrisma.employee.create).toHaveBeenCalledWith({
-        data: { ...dto, role: 'EMPLOYEE', passwordHash: expect.any(String) },
+        data: {
+          ...dto,
+          organizationId: 'org1',
+          role: 'EMPLOYEE',
+          passwordHash: expect.any(String),
+        },
       });
       expect(result).toEqual({
         ...created,
         temporaryPassword: expect.any(String),
       });
+    });
+
+    it('throws ForbiddenException when the caller has no organization', async () => {
+      await expect(
+        service.create(dto as any, orglessUser as any),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockPrisma.employee.create).not.toHaveBeenCalled();
     });
 
     it('throws ForbiddenException when a non-admin tries to assign a role other than EMPLOYEE', async () => {
@@ -137,7 +160,6 @@ describe('EmployeeService', () => {
     });
 
     it('allows an admin to assign a non-default role', async () => {
-      mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
       mockPrisma.employee.findFirst.mockResolvedValue(null);
       mockPrisma.employee.create.mockResolvedValue({
         ...created,
@@ -152,106 +174,45 @@ describe('EmployeeService', () => {
       expect(mockPrisma.employee.create).toHaveBeenCalledWith({
         data: {
           ...dto,
+          organizationId: 'org1',
           role: 'HR_MANAGER',
           passwordHash: expect.any(String),
         },
       });
     });
 
-    it("auto-provisions a leave balance for each of the org's leave types", async () => {
-      mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
+    it('does not auto-create any leave balances', async () => {
       mockPrisma.employee.findFirst.mockResolvedValue(null);
       mockPrisma.employee.create.mockResolvedValue(created);
-      mockPrisma.leaveType.findMany.mockResolvedValueOnce([
-        { id: 'lt-annual', daysPerYear: 14, organizationId: 'org1' },
-        { id: 'lt-sick', daysPerYear: 10, organizationId: 'org1' },
-      ]);
 
       await service.create(dto as any, hrUser as any);
 
-      expect(mockPrisma.leaveType.findMany).toHaveBeenCalledWith({
-        where: { organizationId: 'org1' },
-      });
-      expect(mockPrisma.leaveBalance.createMany).toHaveBeenCalledWith({
-        data: [
-          {
-            employeeId: '1',
-            leaveTypeId: 'lt-annual',
-            year: expect.any(Number),
-            totalDays: 14,
-            usedDays: 0,
-            remainingDays: 14,
-          },
-          {
-            employeeId: '1',
-            leaveTypeId: 'lt-sick',
-            year: expect.any(Number),
-            totalDays: 10,
-            usedDays: 0,
-            remainingDays: 10,
-          },
-        ],
-      });
-    });
-
-    it('skips leave balance creation when the org has no leave types', async () => {
-      mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
-      mockPrisma.employee.findFirst.mockResolvedValue(null);
-      mockPrisma.employee.create.mockResolvedValue(created);
-      mockPrisma.leaveType.findMany.mockResolvedValueOnce([]);
-
-      await service.create(dto as any, hrUser as any);
-
+      expect(mockPrisma.leaveType.findMany).not.toHaveBeenCalled();
       expect(mockPrisma.leaveBalance.createMany).not.toHaveBeenCalled();
     });
 
     it('passes employmentType through to prisma when provided', async () => {
       const dtoWithType = { ...dto, employmentType: 'CONTRACTOR' };
-      mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
       mockPrisma.employee.findFirst.mockResolvedValue(null);
-      mockPrisma.employee.create.mockResolvedValue({ id: '1', ...dtoWithType });
+      mockPrisma.employee.create.mockResolvedValue({
+        id: '1',
+        ...dtoWithType,
+        organizationId: 'org1',
+      });
 
       await service.create(dtoWithType as any, hrUser as any);
 
       expect(mockPrisma.employee.create).toHaveBeenCalledWith({
         data: {
           ...dtoWithType,
+          organizationId: 'org1',
           role: 'EMPLOYEE',
           passwordHash: expect.any(String),
         },
       });
     });
 
-    it('throws ForbiddenException when a non-admin creates outside their own organization', async () => {
-      await expect(
-        service.create(dto as any, otherOrgUser as any),
-      ).rejects.toThrow(ForbiddenException);
-      expect(mockPrisma.employee.create).not.toHaveBeenCalled();
-    });
-
-    it('allows an admin to create an employee in any organization', async () => {
-      mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
-      mockPrisma.employee.findFirst.mockResolvedValue(null);
-      mockPrisma.employee.create.mockResolvedValue(created);
-
-      await service.create(dto as any, adminUser as any);
-
-      expect(mockPrisma.employee.create).toHaveBeenCalledWith({
-        data: { ...dto, role: 'EMPLOYEE', passwordHash: expect.any(String) },
-      });
-    });
-
-    it('throws NotFoundException when the organization does not exist', async () => {
-      mockPrisma.organization.findUnique.mockResolvedValue(null);
-
-      await expect(service.create(dto as any, hrUser as any)).rejects.toThrow(
-        NotFoundException,
-      );
-      expect(mockPrisma.employee.create).not.toHaveBeenCalled();
-    });
-
     it('throws NotFoundException when the country does not exist', async () => {
-      mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
       mockPrisma.country.findUnique.mockResolvedValueOnce(null);
 
       await expect(service.create(dto as any, hrUser as any)).rejects.toThrow(
@@ -261,7 +222,6 @@ describe('EmployeeService', () => {
     });
 
     it('throws ConflictException when code/email/identification already exists', async () => {
-      mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
       mockPrisma.employee.findFirst.mockResolvedValue(created);
 
       await expect(service.create(dto as any, hrUser as any)).rejects.toThrow(
@@ -274,7 +234,6 @@ describe('EmployeeService', () => {
       const dtoWithManager = { ...dto, managerId: 'mgr1' };
 
       it('throws NotFoundException when the manager does not exist', async () => {
-        mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
         mockPrisma.employee.findFirst.mockResolvedValue(null);
         mockPrisma.employee.findUnique.mockResolvedValue(null);
 
@@ -285,7 +244,6 @@ describe('EmployeeService', () => {
       });
 
       it('throws BadRequestException when the manager belongs to a different organization', async () => {
-        mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
         mockPrisma.employee.findFirst.mockResolvedValue(null);
         mockPrisma.employee.findUnique.mockResolvedValue({
           id: 'mgr1',
@@ -299,7 +257,6 @@ describe('EmployeeService', () => {
       });
 
       it('creates the employee when the manager is valid', async () => {
-        mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
         mockPrisma.employee.findFirst.mockResolvedValue(null);
         mockPrisma.employee.findUnique.mockResolvedValue({
           id: 'mgr1',
@@ -308,6 +265,7 @@ describe('EmployeeService', () => {
         mockPrisma.employee.create.mockResolvedValue({
           id: '1',
           ...dtoWithManager,
+          organizationId: 'org1',
         });
 
         const result = await service.create(
@@ -318,6 +276,7 @@ describe('EmployeeService', () => {
         expect(result).toEqual({
           id: '1',
           ...dtoWithManager,
+          organizationId: 'org1',
           temporaryPassword: expect.any(String),
         });
       });
@@ -327,7 +286,6 @@ describe('EmployeeService', () => {
       const dtoWithDept = { ...dto, departmentId: 'dept1' };
 
       it('throws NotFoundException when the department does not exist', async () => {
-        mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
         mockPrisma.employee.findFirst.mockResolvedValue(null);
         mockPrisma.department.findUnique.mockResolvedValue(null);
 
@@ -338,7 +296,6 @@ describe('EmployeeService', () => {
       });
 
       it('throws BadRequestException when the department belongs to a different organization', async () => {
-        mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
         mockPrisma.employee.findFirst.mockResolvedValue(null);
         mockPrisma.department.findUnique.mockResolvedValue({
           id: 'dept1',
@@ -352,7 +309,6 @@ describe('EmployeeService', () => {
       });
 
       it('creates the employee when the department is valid', async () => {
-        mockPrisma.organization.findUnique.mockResolvedValue({ id: 'org1' });
         mockPrisma.employee.findFirst.mockResolvedValue(null);
         mockPrisma.department.findUnique.mockResolvedValue({
           id: 'dept1',
@@ -361,6 +317,7 @@ describe('EmployeeService', () => {
         mockPrisma.employee.create.mockResolvedValue({
           id: '1',
           ...dtoWithDept,
+          organizationId: 'org1',
         });
 
         const result = await service.create(dtoWithDept as any, hrUser as any);
@@ -368,6 +325,59 @@ describe('EmployeeService', () => {
         expect(result).toEqual({
           id: '1',
           ...dtoWithDept,
+          organizationId: 'org1',
+          temporaryPassword: expect.any(String),
+        });
+      });
+    });
+
+    describe('end client validation', () => {
+      const dtoWithEndClient = { ...dto, endClientId: 'ec1' };
+
+      it('throws NotFoundException when the end client does not exist', async () => {
+        mockPrisma.employee.findFirst.mockResolvedValue(null);
+        mockPrisma.endClient.findUnique.mockResolvedValue(null);
+
+        await expect(
+          service.create(dtoWithEndClient as any, hrUser as any),
+        ).rejects.toThrow(NotFoundException);
+        expect(mockPrisma.employee.create).not.toHaveBeenCalled();
+      });
+
+      it('throws BadRequestException when the end client belongs to a different organization', async () => {
+        mockPrisma.employee.findFirst.mockResolvedValue(null);
+        mockPrisma.endClient.findUnique.mockResolvedValue({
+          id: 'ec1',
+          organizationId: 'org2',
+        });
+
+        await expect(
+          service.create(dtoWithEndClient as any, hrUser as any),
+        ).rejects.toThrow(BadRequestException);
+        expect(mockPrisma.employee.create).not.toHaveBeenCalled();
+      });
+
+      it('creates the employee when the end client is valid', async () => {
+        mockPrisma.employee.findFirst.mockResolvedValue(null);
+        mockPrisma.endClient.findUnique.mockResolvedValue({
+          id: 'ec1',
+          organizationId: 'org1',
+        });
+        mockPrisma.employee.create.mockResolvedValue({
+          id: '1',
+          ...dtoWithEndClient,
+          organizationId: 'org1',
+        });
+
+        const result = await service.create(
+          dtoWithEndClient as any,
+          hrUser as any,
+        );
+
+        expect(result).toEqual({
+          id: '1',
+          ...dtoWithEndClient,
+          organizationId: 'org1',
           temporaryPassword: expect.any(String),
         });
       });
@@ -501,6 +511,64 @@ describe('EmployeeService', () => {
       await expect(service.listOptions(orglessUser as any)).rejects.toThrow(
         ForbiddenException,
       );
+      expect(mockPrisma.employee.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getMonthlyHeadcount
+  // ---------------------------------------------------------------------------
+  describe('getMonthlyHeadcount', () => {
+    it('returns a cumulative count per month scoped to the organization', async () => {
+      mockPrisma.employee.findMany.mockResolvedValue([
+        { hireDate: new Date('2026-01-15') },
+        { hireDate: new Date('2026-03-10') },
+        { hireDate: new Date('2026-03-20') },
+      ]);
+
+      const result = await service.getMonthlyHeadcount(hrUser as any, 2026);
+
+      expect(mockPrisma.employee.findMany).toHaveBeenCalledWith({
+        where: {
+          organizationId: 'org1',
+          hireDate: { lt: new Date(Date.UTC(2027, 0, 1)) },
+        },
+        select: { hireDate: true },
+      });
+      expect(result).toEqual([
+        { month: 1, count: 1 },
+        { month: 2, count: 1 },
+        { month: 3, count: 3 },
+        { month: 4, count: 3 },
+        { month: 5, count: 3 },
+        { month: 6, count: 3 },
+        { month: 7, count: 3 },
+        { month: 8, count: 3 },
+        { month: 9, count: 3 },
+        { month: 10, count: 3 },
+        { month: 11, count: 3 },
+        { month: 12, count: 3 },
+      ]);
+    });
+
+    it("scopes an admin to their own organization too", async () => {
+      mockPrisma.employee.findMany.mockResolvedValue([]);
+
+      await service.getMonthlyHeadcount(adminUser as any, 2026);
+
+      expect(mockPrisma.employee.findMany).toHaveBeenCalledWith({
+        where: {
+          organizationId: 'org1',
+          hireDate: { lt: new Date(Date.UTC(2027, 0, 1)) },
+        },
+        select: { hireDate: true },
+      });
+    });
+
+    it('throws ForbiddenException when the caller has no organization', async () => {
+      await expect(
+        service.getMonthlyHeadcount(orglessUser as any, 2026),
+      ).rejects.toThrow(ForbiddenException);
       expect(mockPrisma.employee.findMany).not.toHaveBeenCalled();
     });
   });
@@ -652,15 +720,6 @@ describe('EmployeeService', () => {
       expect(mockPrisma.employee.update).not.toHaveBeenCalled();
     });
 
-    it('throws ForbiddenException when a non-admin tries to move the employee to a different org', async () => {
-      mockPrisma.employee.findUnique.mockResolvedValue(existing);
-
-      await expect(
-        service.update('abc', { organizationId: 'org2' }, hrUser as any),
-      ).rejects.toThrow(ForbiddenException);
-      expect(mockPrisma.employee.update).not.toHaveBeenCalled();
-    });
-
     it('throws ConflictException when another employee has the same unique fields', async () => {
       const conflict = { id: 'xyz', employeeCode: 'EMP-1' };
       mockPrisma.employee.findUnique.mockResolvedValue(existing);
@@ -682,6 +741,33 @@ describe('EmployeeService', () => {
       await service.update('abc', { phone: '123' }, hrUser as any);
 
       expect(mockPrisma.employee.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('uploads a profile picture to S3 and includes it in the update', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(existing);
+      mockPrisma.employee.update.mockResolvedValue(existing);
+      mockS3.uploadFile.mockResolvedValue(
+        'https://bucket.s3.amazonaws.com/pic.png',
+      );
+      const file = {
+        buffer: Buffer.from('img'),
+        mimetype: 'image/png',
+        originalname: 'pic.png',
+      };
+
+      await service.update('abc', {}, hrUser as any, file as any);
+
+      expect(mockS3.uploadFile).toHaveBeenCalledWith(
+        file.buffer,
+        expect.stringMatching(/^employees\/abc\/profile-picture-.*\.png$/),
+        'image/png',
+      );
+      expect(mockPrisma.employee.update).toHaveBeenCalledWith({
+        where: { id: 'abc' },
+        data: expect.objectContaining({
+          profilePicture: 'https://bucket.s3.amazonaws.com/pic.png',
+        }),
+      });
     });
 
     describe('country validation', () => {
@@ -818,6 +904,51 @@ describe('EmployeeService', () => {
         expect(result).toEqual({ ...existing, departmentId: 'dept1' });
       });
     });
+
+    describe('end client validation', () => {
+      it('throws NotFoundException when the end client does not exist', async () => {
+        mockPrisma.employee.findUnique.mockResolvedValueOnce(existing);
+        mockPrisma.endClient.findUnique.mockResolvedValue(null);
+
+        await expect(
+          service.update('abc', { endClientId: 'missing-ec' }, hrUser as any),
+        ).rejects.toThrow(NotFoundException);
+        expect(mockPrisma.employee.update).not.toHaveBeenCalled();
+      });
+
+      it('throws BadRequestException when the end client belongs to a different organization', async () => {
+        mockPrisma.employee.findUnique.mockResolvedValueOnce(existing);
+        mockPrisma.endClient.findUnique.mockResolvedValue({
+          id: 'ec1',
+          organizationId: 'org2',
+        });
+
+        await expect(
+          service.update('abc', { endClientId: 'ec1' }, hrUser as any),
+        ).rejects.toThrow(BadRequestException);
+        expect(mockPrisma.employee.update).not.toHaveBeenCalled();
+      });
+
+      it('updates the employee when the end client is valid', async () => {
+        mockPrisma.employee.findUnique.mockResolvedValueOnce(existing);
+        mockPrisma.endClient.findUnique.mockResolvedValue({
+          id: 'ec1',
+          organizationId: 'org1',
+        });
+        mockPrisma.employee.update.mockResolvedValue({
+          ...existing,
+          endClientId: 'ec1',
+        });
+
+        const result = await service.update(
+          'abc',
+          { endClientId: 'ec1' },
+          hrUser as any,
+        );
+
+        expect(result).toEqual({ ...existing, endClientId: 'ec1' });
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -916,7 +1047,24 @@ describe('EmployeeService', () => {
       expect(result).toEqual(employee);
     });
 
-    it('throws ConflictException when the employee is not INACTIVE', async () => {
+    it('deletes and returns the employee when status is TERMINATED', async () => {
+      const employee = {
+        id: 'abc',
+        organizationId: 'org1',
+        status: 'TERMINATED',
+      };
+      mockPrisma.employee.findUnique.mockResolvedValue(employee);
+      mockPrisma.employee.delete.mockResolvedValue(employee);
+
+      const result = await service.remove('abc', hrUser as any);
+
+      expect(mockPrisma.employee.delete).toHaveBeenCalledWith({
+        where: { id: 'abc' },
+      });
+      expect(result).toEqual(employee);
+    });
+
+    it('throws ConflictException when the employee is neither INACTIVE nor TERMINATED', async () => {
       const employee = { id: 'abc', organizationId: 'org1', status: 'ACTIVE' };
       mockPrisma.employee.findUnique.mockResolvedValue(employee);
 
@@ -984,6 +1132,40 @@ describe('EmployeeService', () => {
       ).rejects.toThrow(NotFoundException);
       expect(mockPrisma.employeeContract.create).not.toHaveBeenCalled();
     });
+
+    it('uploads a file to S3 and uses its URL, ignoring any dto.fileUrl', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue({
+        id: 'abc',
+        organizationId: 'org1',
+      });
+      mockPrisma.employeeContract.create.mockResolvedValue({ id: 'c1' });
+      mockS3.uploadFile.mockResolvedValue(
+        'https://bucket.s3.amazonaws.com/contract.pdf',
+      );
+      const file = {
+        buffer: Buffer.from('pdf'),
+        mimetype: 'application/pdf',
+        originalname: 'contract.pdf',
+      };
+
+      await service.addContract(
+        'abc',
+        { ...dto, fileUrl: 'https://ignored.example.com/x.pdf' } as any,
+        hrUser as any,
+        file as any,
+      );
+
+      expect(mockS3.uploadFile).toHaveBeenCalledWith(
+        file.buffer,
+        expect.stringMatching(/^employees\/abc\/contracts\/.*\.pdf$/),
+        'application/pdf',
+      );
+      expect(mockPrisma.employeeContract.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          fileUrl: 'https://bucket.s3.amazonaws.com/contract.pdf',
+        }),
+      });
+    });
   });
 
   describe('listContracts', () => {
@@ -1050,6 +1232,56 @@ describe('EmployeeService', () => {
       ).rejects.toThrow(NotFoundException);
       expect(mockPrisma.employeeDocument.create).not.toHaveBeenCalled();
     });
+
+    it('throws BadRequestException when neither a file nor fileUrl is given', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue({
+        id: 'abc',
+        organizationId: 'org1',
+      });
+
+      await expect(
+        service.addDocument(
+          'abc',
+          { documentType: 'Certificate' } as any,
+          hrUser as any,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrisma.employeeDocument.create).not.toHaveBeenCalled();
+    });
+
+    it('uploads a file to S3 and uses its URL, ignoring any dto.fileUrl', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue({
+        id: 'abc',
+        organizationId: 'org1',
+      });
+      mockPrisma.employeeDocument.create.mockResolvedValue({ id: 'd1' });
+      mockS3.uploadFile.mockResolvedValue(
+        'https://bucket.s3.amazonaws.com/cert.pdf',
+      );
+      const file = {
+        buffer: Buffer.from('pdf'),
+        mimetype: 'application/pdf',
+        originalname: 'cert.pdf',
+      };
+
+      await service.addDocument(
+        'abc',
+        { ...dto, fileUrl: 'https://ignored.example.com/x.pdf' } as any,
+        hrUser as any,
+        file as any,
+      );
+
+      expect(mockS3.uploadFile).toHaveBeenCalledWith(
+        file.buffer,
+        expect.stringMatching(/^employees\/abc\/documents\/.*\.pdf$/),
+        'application/pdf',
+      );
+      expect(mockPrisma.employeeDocument.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          fileUrl: 'https://bucket.s3.amazonaws.com/cert.pdf',
+        }),
+      });
+    });
   });
 
   describe('listDocuments', () => {
@@ -1076,6 +1308,174 @@ describe('EmployeeService', () => {
       await expect(
         service.listDocuments('missing', hrUser as any),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // allowances
+  // ---------------------------------------------------------------------------
+  describe('addAllowance', () => {
+    const dto = { name: 'Housing', amount: 150000 };
+
+    it('creates an allowance for an existing employee', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue({
+        id: 'abc',
+        organizationId: 'org1',
+      });
+      const created = { id: 'a1', employeeId: 'abc', ...dto };
+      mockPrisma.employeeAllowance.create.mockResolvedValue(created);
+
+      const result = await service.addAllowance(
+        'abc',
+        dto as any,
+        hrUser as any,
+      );
+
+      expect(mockPrisma.employeeAllowance.create).toHaveBeenCalledWith({
+        data: { ...dto, employeeId: 'abc' },
+      });
+      expect(result).toEqual(created);
+    });
+
+    it('throws NotFoundException when the employee does not exist', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.addAllowance('missing', dto as any, hrUser as any),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockPrisma.employeeAllowance.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listAllowances', () => {
+    it('returns allowances ordered by createdAt asc', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue({
+        id: 'abc',
+        organizationId: 'org1',
+      });
+      const allowances = [{ id: 'a1' }];
+      mockPrisma.employeeAllowance.findMany.mockResolvedValue(allowances);
+
+      const result = await service.listAllowances('abc', hrUser as any);
+
+      expect(mockPrisma.employeeAllowance.findMany).toHaveBeenCalledWith({
+        where: { employeeId: 'abc' },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(result).toEqual(allowances);
+    });
+
+    it('throws NotFoundException when the employee does not exist', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.listAllowances('missing', hrUser as any),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('updateAllowance', () => {
+    const employee = { id: 'abc', organizationId: 'org1' };
+    const allowance = { id: 'a1', employeeId: 'abc', name: 'Housing' };
+
+    it('updates and returns the allowance', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(employee);
+      mockPrisma.employeeAllowance.findUnique.mockResolvedValue(allowance);
+      mockPrisma.employeeAllowance.update.mockResolvedValue({
+        ...allowance,
+        amount: 200000,
+      });
+
+      const result = await service.updateAllowance(
+        'abc',
+        'a1',
+        { amount: 200000 } as any,
+        hrUser as any,
+      );
+
+      expect(mockPrisma.employeeAllowance.update).toHaveBeenCalledWith({
+        where: { id: 'a1' },
+        data: { amount: 200000 },
+      });
+      expect(result).toEqual({ ...allowance, amount: 200000 });
+    });
+
+    it('throws NotFoundException when the employee does not exist', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateAllowance(
+          'missing',
+          'a1',
+          { amount: 1 } as any,
+          hrUser as any,
+        ),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockPrisma.employeeAllowance.update).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the allowance does not exist', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(employee);
+      mockPrisma.employeeAllowance.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateAllowance(
+          'abc',
+          'missing',
+          { amount: 1 } as any,
+          hrUser as any,
+        ),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockPrisma.employeeAllowance.update).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the allowance belongs to a different employee', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(employee);
+      mockPrisma.employeeAllowance.findUnique.mockResolvedValue({
+        ...allowance,
+        employeeId: 'other-emp',
+      });
+
+      await expect(
+        service.updateAllowance(
+          'abc',
+          'a1',
+          { amount: 1 } as any,
+          hrUser as any,
+        ),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockPrisma.employeeAllowance.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('removeAllowance', () => {
+    const employee = { id: 'abc', organizationId: 'org1' };
+    const allowance = { id: 'a1', employeeId: 'abc', name: 'Housing' };
+
+    it('deletes and returns the allowance', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(employee);
+      mockPrisma.employeeAllowance.findUnique.mockResolvedValue(allowance);
+      mockPrisma.employeeAllowance.delete.mockResolvedValue(allowance);
+
+      const result = await service.removeAllowance('abc', 'a1', hrUser as any);
+
+      expect(mockPrisma.employeeAllowance.delete).toHaveBeenCalledWith({
+        where: { id: 'a1' },
+      });
+      expect(result).toEqual(allowance);
+    });
+
+    it('throws NotFoundException when the allowance belongs to a different employee', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue(employee);
+      mockPrisma.employeeAllowance.findUnique.mockResolvedValue({
+        ...allowance,
+        employeeId: 'other-emp',
+      });
+
+      await expect(
+        service.removeAllowance('abc', 'a1', hrUser as any),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockPrisma.employeeAllowance.delete).not.toHaveBeenCalled();
     });
   });
 });

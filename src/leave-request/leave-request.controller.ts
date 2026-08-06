@@ -8,13 +8,18 @@ import {
   ParseEnumPipe,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFiles,
 } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiParam,
   ApiQuery,
+  ApiConsumes,
+  ApiBody,
   ApiCreatedResponse,
   ApiOkResponse,
   ApiBearerAuth,
@@ -24,11 +29,12 @@ import { CreateLeaveRequestDto } from './dto/create-leave-request.dto.ts';
 import { ReviewLeaveRequestDto } from './dto/review-leave-request.dto.ts';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.ts';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.ts';
-import { RolesGuard } from '../auth/guards/roles.guard.ts';
-import { Roles } from '../auth/decorators/roles.decorator.ts';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.ts';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface.ts';
-import { LeaveStatus, Role } from '../../generated/prisma/enums.js';
+import { LeaveStatus } from '../../generated/prisma/enums.js';
+import { IMAGE_UPLOAD_OPTIONS } from '../upload/upload-options.ts';
+
+const MAX_LEAVE_REQUEST_ATTACHMENTS = 5;
 
 @ApiTags('Leave Requests')
 @ApiBearerAuth()
@@ -38,7 +44,35 @@ export class LeaveRequestController {
   constructor(private readonly leaveRequestService: LeaveRequestService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Submit a leave request' })
+  @UseInterceptors(
+    FilesInterceptor(
+      'attachments',
+      MAX_LEAVE_REQUEST_ATTACHMENTS,
+      IMAGE_UPLOAD_OPTIONS,
+    ),
+  )
+  @ApiOperation({
+    summary: 'Submit a leave request',
+    description:
+      'Accepts up to 5 image attachments (e.g. a medical certificate) via the `attachments` field.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        employeeId: { type: 'string' },
+        leaveTypeId: { type: 'string' },
+        startDate: { type: 'string', format: 'date' },
+        endDate: { type: 'string', format: 'date' },
+        reason: { type: 'string' },
+        attachments: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+        },
+      },
+    },
+  })
   @ApiCreatedResponse({
     description: 'Leave request created (status: PENDING)',
   })
@@ -46,9 +80,10 @@ export class LeaveRequestController {
   @ApiResponse({ status: 400, description: 'endDate is before startDate' })
   create(
     @Body() dto: CreateLeaveRequestDto,
+    @UploadedFiles() files: Express.Multer.File[],
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.leaveRequestService.create(dto, user);
+    return this.leaveRequestService.create(dto, user, files);
   }
 
   @Get()
@@ -110,12 +145,18 @@ export class LeaveRequestController {
   }
 
   @Patch(':id/approve')
-  @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.HR_MANAGER)
-  @ApiOperation({ summary: 'Approve a pending leave request (admin/HR only)' })
+  @ApiOperation({
+    summary:
+      "Approve a pending leave request (admin, HR manager, or the employee's manager)",
+  })
   @ApiParam({ name: 'id', description: 'Leave request ID' })
   @ApiOkResponse({ description: 'Leave request approved' })
   @ApiResponse({ status: 404, description: 'Leave request not found' })
+  @ApiResponse({
+    status: 403,
+    description:
+      "Only an admin, HR manager, or the employee's manager can review this request",
+  })
   @ApiResponse({
     status: 409,
     description:
@@ -130,12 +171,18 @@ export class LeaveRequestController {
   }
 
   @Patch(':id/reject')
-  @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.HR_MANAGER)
-  @ApiOperation({ summary: 'Reject a pending leave request (admin/HR only)' })
+  @ApiOperation({
+    summary:
+      "Reject a pending leave request (admin, HR manager, or the employee's manager)",
+  })
   @ApiParam({ name: 'id', description: 'Leave request ID' })
   @ApiOkResponse({ description: 'Leave request rejected' })
   @ApiResponse({ status: 404, description: 'Leave request not found' })
+  @ApiResponse({
+    status: 403,
+    description:
+      "Only an admin, HR manager, or the employee's manager can review this request",
+  })
   @ApiResponse({
     status: 409,
     description: 'Only pending requests can be rejected',

@@ -8,6 +8,11 @@ import {
 } from '@nestjs/common';
 import { LeaveRequestService } from './leave-request.service.ts';
 import { PrismaService } from '../prisma/prisma.service.ts';
+import { S3Service } from '../upload/s3.service.ts';
+
+const mockS3 = {
+  uploadFile: jest.fn<any>(),
+};
 
 const mockPrisma = {
   employee: {
@@ -27,11 +32,15 @@ const mockPrisma = {
     findUnique: jest.fn<any>(),
     update: jest.fn<any>(),
   },
+  publicHoliday: {
+    findMany: jest.fn<any>(),
+  },
   $transaction: jest.fn<any>(),
 };
 mockPrisma.$transaction.mockImplementation((queries: any) =>
   Promise.all(queries),
 );
+mockPrisma.publicHoliday.findMany.mockResolvedValue([]);
 
 const adminUser = {
   id: 'u-admin',
@@ -73,6 +82,7 @@ describe('LeaveRequestService', () => {
       providers: [
         LeaveRequestService,
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: S3Service, useValue: mockS3 },
       ],
     }).compile();
 
@@ -86,16 +96,17 @@ describe('LeaveRequestService', () => {
     const dto = {
       employeeId: 'emp1',
       leaveTypeId: 'lt-annual',
-      startDate: '2026-08-01',
-      endDate: '2026-08-03',
+      startDate: '2026-08-03',
+      endDate: '2026-08-05',
       reason: 'Vacation',
     };
 
-    it('creates a leave request and computes totalDays inclusively', async () => {
+    it('creates a leave request and counts only weekdays (Mon-Wed)', async () => {
       mockPrisma.employee.findUnique.mockResolvedValue({
         id: 'emp1',
         organizationId: 'org1',
         gender: 'MALE',
+        countryId: 'country1',
       });
       mockPrisma.leaveType.findUnique.mockResolvedValue(annualLeaveType);
       const created = { id: '1', ...dto, totalDays: 3, status: 'PENDING' };
@@ -103,17 +114,143 @@ describe('LeaveRequestService', () => {
 
       const result = await service.create(dto as any, hrUser as any);
 
+      expect(mockPrisma.publicHoliday.findMany).toHaveBeenCalledWith({
+        where: {
+          countryId: 'country1',
+          date: { gte: new Date('2026-08-03'), lte: new Date('2026-08-05') },
+        },
+        select: { date: true },
+      });
+      expect(mockPrisma.leaveRequest.create).toHaveBeenCalledWith({
+        data: {
+          employeeId: 'emp1',
+          leaveTypeId: 'lt-annual',
+          startDate: new Date('2026-08-03'),
+          endDate: new Date('2026-08-05'),
+          totalDays: 3,
+          reason: 'Vacation',
+          attachmentUrls: [],
+        },
+      });
+      expect(result).toEqual(created);
+    });
+
+    it('uploads image attachments to S3 and stores their URLs', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue({
+        id: 'emp1',
+        organizationId: 'org1',
+        gender: 'MALE',
+        countryId: 'country1',
+      });
+      mockPrisma.leaveType.findUnique.mockResolvedValue(annualLeaveType);
+      mockPrisma.leaveRequest.create.mockResolvedValue({ id: '1' });
+      mockS3.uploadFile
+        .mockResolvedValueOnce('https://bucket.s3.amazonaws.com/a.jpg')
+        .mockResolvedValueOnce('https://bucket.s3.amazonaws.com/b.png');
+
+      const files = [
+        { originalname: 'a.jpg', mimetype: 'image/jpeg', buffer: Buffer.from('a') },
+        { originalname: 'b.png', mimetype: 'image/png', buffer: Buffer.from('b') },
+      ];
+
+      await service.create(dto as any, hrUser as any, files as any);
+
+      expect(mockS3.uploadFile).toHaveBeenCalledTimes(2);
+      expect(mockS3.uploadFile).toHaveBeenNthCalledWith(
+        1,
+        files[0].buffer,
+        expect.stringMatching(/^leave-requests\/emp1\/.*-0\.jpg$/),
+        'image/jpeg',
+      );
+      expect(mockS3.uploadFile).toHaveBeenNthCalledWith(
+        2,
+        files[1].buffer,
+        expect.stringMatching(/^leave-requests\/emp1\/.*-1\.png$/),
+        'image/png',
+      );
+      expect(mockPrisma.leaveRequest.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          attachmentUrls: [
+            'https://bucket.s3.amazonaws.com/a.jpg',
+            'https://bucket.s3.amazonaws.com/b.png',
+          ],
+        }),
+      });
+    });
+
+    it('excludes weekends from the day count', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue({
+        id: 'emp1',
+        organizationId: 'org1',
+        gender: 'MALE',
+        countryId: 'country1',
+      });
+      mockPrisma.leaveType.findUnique.mockResolvedValue(annualLeaveType);
+      mockPrisma.leaveRequest.create.mockResolvedValue({ id: '1' });
+
+      // Sat 2026-08-01 through Mon 2026-08-03 -> only the Monday counts
+      await service.create(
+        { ...dto, startDate: '2026-08-01', endDate: '2026-08-03' } as any,
+        hrUser as any,
+      );
+
       expect(mockPrisma.leaveRequest.create).toHaveBeenCalledWith({
         data: {
           employeeId: 'emp1',
           leaveTypeId: 'lt-annual',
           startDate: new Date('2026-08-01'),
           endDate: new Date('2026-08-03'),
-          totalDays: 3,
+          totalDays: 1,
           reason: 'Vacation',
+          attachmentUrls: [],
         },
       });
-      expect(result).toEqual(created);
+    });
+
+    it('excludes public holidays that fall on a weekday from the day count', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue({
+        id: 'emp1',
+        organizationId: 'org1',
+        gender: 'MALE',
+        countryId: 'country1',
+      });
+      mockPrisma.leaveType.findUnique.mockResolvedValue(annualLeaveType);
+      mockPrisma.publicHoliday.findMany.mockResolvedValueOnce([
+        { date: new Date('2026-08-04') },
+      ]);
+      mockPrisma.leaveRequest.create.mockResolvedValue({ id: '1' });
+
+      await service.create(dto as any, hrUser as any);
+
+      expect(mockPrisma.leaveRequest.create).toHaveBeenCalledWith({
+        data: {
+          employeeId: 'emp1',
+          leaveTypeId: 'lt-annual',
+          startDate: new Date('2026-08-03'),
+          endDate: new Date('2026-08-05'),
+          totalDays: 2,
+          reason: 'Vacation',
+          attachmentUrls: [],
+        },
+      });
+    });
+
+    it('throws BadRequestException when the range contains no working days', async () => {
+      mockPrisma.employee.findUnique.mockResolvedValue({
+        id: 'emp1',
+        organizationId: 'org1',
+        gender: 'MALE',
+        countryId: 'country1',
+      });
+      mockPrisma.leaveType.findUnique.mockResolvedValue(annualLeaveType);
+
+      await expect(
+        service.create(
+          { ...dto, startDate: '2026-08-01', endDate: '2026-08-02' } as any,
+          hrUser as any,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrisma.leaveRequest.create).not.toHaveBeenCalled();
     });
 
     it('allows an admin to create a leave request for an employee in any organization', async () => {
@@ -121,6 +258,7 @@ describe('LeaveRequestService', () => {
         id: 'emp1',
         organizationId: 'org2',
         gender: 'MALE',
+        countryId: 'country1',
       });
       mockPrisma.leaveType.findUnique.mockResolvedValue({
         ...annualLeaveType,
@@ -209,6 +347,7 @@ describe('LeaveRequestService', () => {
         id: 'emp1',
         organizationId: 'org1',
         gender: 'FEMALE',
+        countryId: 'country1',
       });
       mockPrisma.leaveType.findUnique.mockResolvedValue(maternalLeaveType);
       mockPrisma.leaveRequest.create.mockResolvedValue({ id: '1' });
@@ -490,9 +629,9 @@ describe('LeaveRequestService', () => {
         remainingDays: 2,
       });
 
-      await expect(
-        service.approve('abc', {}, hrUser as any),
-      ).rejects.toThrow(ConflictException);
+      await expect(service.approve('abc', {}, hrUser as any)).rejects.toThrow(
+        ConflictException,
+      );
       expect(mockPrisma.leaveRequest.update).not.toHaveBeenCalled();
     });
 
@@ -545,9 +684,60 @@ describe('LeaveRequestService', () => {
         status: 'APPROVED',
       });
 
+      await expect(service.approve('abc', {}, hrUser as any)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(mockPrisma.leaveRequest.update).not.toHaveBeenCalled();
+    });
+
+    it('throws ForbiddenException when the employee tries to approve their own request', async () => {
+      mockPrisma.leaveRequest.findUnique.mockResolvedValue(pendingRequest);
+
       await expect(
-        service.approve('abc', {}, hrUser as any),
-      ).rejects.toThrow(ConflictException);
+        service.approve('abc', {}, { ...hrUser, id: 'emp1' } as any),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockPrisma.leaveRequest.update).not.toHaveBeenCalled();
+    });
+
+    it("allows the employee's own manager (a plain EMPLOYEE role) to approve", async () => {
+      const managedRequest = {
+        ...pendingRequest,
+        employee: { ...pendingRequest.employee, managerId: 'mgr1' },
+      };
+      mockPrisma.leaveRequest.findUnique.mockResolvedValue(managedRequest);
+      mockPrisma.leaveBalance.findFirst.mockResolvedValue(null);
+      mockPrisma.leaveRequest.update.mockResolvedValue({
+        ...managedRequest,
+        status: 'APPROVED',
+      });
+
+      const manager = {
+        id: 'mgr1',
+        email: 'manager@acme.com',
+        role: 'EMPLOYEE',
+        organizationId: 'org1',
+      };
+      const result = await service.approve('abc', {}, manager as any);
+
+      expect(result.status).toBe('APPROVED');
+    });
+
+    it('throws ForbiddenException when an unrelated EMPLOYEE tries to approve', async () => {
+      mockPrisma.leaveRequest.findUnique.mockResolvedValue({
+        ...pendingRequest,
+        employee: { ...pendingRequest.employee, managerId: 'mgr1' },
+      });
+
+      const stranger = {
+        id: 'someone-else',
+        email: 'stranger@acme.com',
+        role: 'EMPLOYEE',
+        organizationId: 'org1',
+      };
+
+      await expect(service.approve('abc', {}, stranger as any)).rejects.toThrow(
+        ForbiddenException,
+      );
       expect(mockPrisma.leaveRequest.update).not.toHaveBeenCalled();
     });
   });
@@ -599,10 +789,41 @@ describe('LeaveRequestService', () => {
         status: 'CANCELLED',
       });
 
-      await expect(
-        service.reject('abc', {}, hrUser as any),
-      ).rejects.toThrow(ConflictException);
+      await expect(service.reject('abc', {}, hrUser as any)).rejects.toThrow(
+        ConflictException,
+      );
       expect(mockPrisma.leaveRequest.update).not.toHaveBeenCalled();
+    });
+
+    it('throws ForbiddenException when the employee tries to reject their own request', async () => {
+      mockPrisma.leaveRequest.findUnique.mockResolvedValue(pendingRequest);
+
+      await expect(
+        service.reject('abc', {}, { ...hrUser, id: 'emp1' } as any),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockPrisma.leaveRequest.update).not.toHaveBeenCalled();
+    });
+
+    it("allows the employee's own manager (a plain EMPLOYEE role) to reject", async () => {
+      const managedRequest = {
+        ...pendingRequest,
+        employee: { ...pendingRequest.employee, managerId: 'mgr1' },
+      };
+      mockPrisma.leaveRequest.findUnique.mockResolvedValue(managedRequest);
+      mockPrisma.leaveRequest.update.mockResolvedValue({
+        ...managedRequest,
+        status: 'REJECTED',
+      });
+
+      const manager = {
+        id: 'mgr1',
+        email: 'manager@acme.com',
+        role: 'EMPLOYEE',
+        organizationId: 'org1',
+      };
+      const result = await service.reject('abc', {}, manager as any);
+
+      expect(result.status).toBe('REJECTED');
     });
   });
 });

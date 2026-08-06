@@ -7,6 +7,7 @@ const mockService = {
   create: jest.fn<any>(),
   findAll: jest.fn<any>(),
   listOptions: jest.fn<any>(),
+  getMonthlyHeadcount: jest.fn<any>(),
   findOne: jest.fn<any>(),
   getProfile: jest.fn<any>(),
   update: jest.fn<any>(),
@@ -16,6 +17,10 @@ const mockService = {
   listContracts: jest.fn<any>(),
   addDocument: jest.fn<any>(),
   listDocuments: jest.fn<any>(),
+  addAllowance: jest.fn<any>(),
+  listAllowances: jest.fn<any>(),
+  updateAllowance: jest.fn<any>(),
+  removeAllowance: jest.fn<any>(),
 };
 
 const user = {
@@ -42,14 +47,13 @@ describe('EmployeeController', () => {
   describe('create', () => {
     it('delegates to service.create with the provided dto and current user', async () => {
       const dto = {
-        organizationId: 'org1',
         employeeCode: 'EMP-1',
         firstName: 'Jane',
         lastName: 'Doe',
         email: 'jane@example.com',
         salary: 1000,
       };
-      const created = { id: '1', ...dto };
+      const created = { id: '1', ...dto, organizationId: 'org1' };
       mockService.create.mockResolvedValue(created);
 
       const result = await controller.create(dto as any, user as any);
@@ -92,6 +96,35 @@ describe('EmployeeController', () => {
     });
   });
 
+  describe('getHeadcount', () => {
+    it('delegates to service.getMonthlyHeadcount with the requested year and current user', async () => {
+      const headcount = [{ month: 1, count: 3 }];
+      mockService.getMonthlyHeadcount.mockResolvedValue(headcount);
+
+      const result = await controller.getHeadcount(
+        { year: 2026 },
+        user as any,
+      );
+
+      expect(mockService.getMonthlyHeadcount).toHaveBeenCalledWith(
+        user,
+        2026,
+      );
+      expect(result).toEqual(headcount);
+    });
+
+    it('defaults to the current year when none is given', async () => {
+      mockService.getMonthlyHeadcount.mockResolvedValue([]);
+
+      await controller.getHeadcount({}, user as any);
+
+      expect(mockService.getMonthlyHeadcount).toHaveBeenCalledWith(
+        user,
+        new Date().getFullYear(),
+      );
+    });
+  });
+
   describe('findOne', () => {
     it('delegates to service.getProfile with the route id and current user', async () => {
       const employee = { id: 'abc' };
@@ -105,15 +138,39 @@ describe('EmployeeController', () => {
   });
 
   describe('update', () => {
-    it('delegates to service.update with the route id, dto, and current user', async () => {
+    it('delegates to service.update with the route id, dto, uploaded file, and current user', async () => {
       const dto = { firstName: 'Janet' };
       const updated = { id: 'abc', firstName: 'Janet' };
       mockService.update.mockResolvedValue(updated);
 
-      const result = await controller.update('abc', dto, user as any);
+      const result = await controller.update(
+        'abc',
+        dto,
+        undefined as any,
+        user as any,
+      );
 
-      expect(mockService.update).toHaveBeenCalledWith('abc', dto, user);
+      expect(mockService.update).toHaveBeenCalledWith(
+        'abc',
+        dto,
+        user,
+        undefined,
+      );
       expect(result).toEqual(updated);
+    });
+
+    it('passes an uploaded profile picture through to service.update', async () => {
+      const dto = {};
+      const file = {
+        buffer: Buffer.from('img'),
+        mimetype: 'image/png',
+        originalname: 'pic.png',
+      };
+      mockService.update.mockResolvedValue({ id: 'abc' });
+
+      await controller.update('abc', dto, file as any, user as any);
+
+      expect(mockService.update).toHaveBeenCalledWith('abc', dto, user, file);
     });
   });
 
@@ -154,7 +211,7 @@ describe('EmployeeController', () => {
   });
 
   describe('addContract', () => {
-    it('delegates to service.addContract with the employee id, dto, and current user', async () => {
+    it('delegates to service.addContract with the employee id, dto, uploaded file, and current user', async () => {
       const dto = { contractType: 'PERMANENT', startDate: '2024-01-15' };
       const created = { id: 'c1', ...dto };
       mockService.addContract.mockResolvedValue(created);
@@ -162,11 +219,36 @@ describe('EmployeeController', () => {
       const result = await controller.addContract(
         'abc',
         dto as any,
+        undefined as any,
         user as any,
       );
 
-      expect(mockService.addContract).toHaveBeenCalledWith('abc', dto, user);
+      expect(mockService.addContract).toHaveBeenCalledWith(
+        'abc',
+        dto,
+        user,
+        undefined,
+      );
       expect(result).toEqual(created);
+    });
+
+    it('passes an uploaded file through to service.addContract', async () => {
+      const dto = { contractType: 'PERMANENT', startDate: '2024-01-15' };
+      const file = {
+        buffer: Buffer.from('pdf'),
+        mimetype: 'application/pdf',
+        originalname: 'contract.pdf',
+      };
+      mockService.addContract.mockResolvedValue({ id: 'c1' });
+
+      await controller.addContract('abc', dto as any, file as any, user as any);
+
+      expect(mockService.addContract).toHaveBeenCalledWith(
+        'abc',
+        dto,
+        user,
+        file,
+      );
     });
   });
 
@@ -183,7 +265,7 @@ describe('EmployeeController', () => {
   });
 
   describe('addDocument', () => {
-    it('delegates to service.addDocument with the employee id, dto, and current user', async () => {
+    it('delegates to service.addDocument with the employee id, dto, uploaded file, and current user', async () => {
       const dto = {
         documentType: 'Certificate',
         fileUrl: 'https://example.com/doc.pdf',
@@ -194,11 +276,36 @@ describe('EmployeeController', () => {
       const result = await controller.addDocument(
         'abc',
         dto as any,
+        undefined as any,
         user as any,
       );
 
-      expect(mockService.addDocument).toHaveBeenCalledWith('abc', dto, user);
+      expect(mockService.addDocument).toHaveBeenCalledWith(
+        'abc',
+        dto,
+        user,
+        undefined,
+      );
       expect(result).toEqual(created);
+    });
+
+    it('passes an uploaded file through to service.addDocument', async () => {
+      const dto = { documentType: 'Certificate' };
+      const file = {
+        buffer: Buffer.from('pdf'),
+        mimetype: 'application/pdf',
+        originalname: 'cert.pdf',
+      };
+      mockService.addDocument.mockResolvedValue({ id: 'd1' });
+
+      await controller.addDocument('abc', dto as any, file as any, user as any);
+
+      expect(mockService.addDocument).toHaveBeenCalledWith(
+        'abc',
+        dto,
+        user,
+        file,
+      );
     });
   });
 
@@ -211,6 +318,68 @@ describe('EmployeeController', () => {
 
       expect(mockService.listDocuments).toHaveBeenCalledWith('abc', user);
       expect(result).toEqual(documents);
+    });
+  });
+
+  describe('addAllowance', () => {
+    it('delegates to service.addAllowance with the employee id, dto, and current user', async () => {
+      const dto = { name: 'Housing', amount: 150000 };
+      const created = { id: 'a1', ...dto };
+      mockService.addAllowance.mockResolvedValue(created);
+
+      const result = await controller.addAllowance('abc', dto as any, user as any);
+
+      expect(mockService.addAllowance).toHaveBeenCalledWith('abc', dto, user);
+      expect(result).toEqual(created);
+    });
+  });
+
+  describe('listAllowances', () => {
+    it('delegates to service.listAllowances with the employee id and current user', async () => {
+      const allowances = [{ id: 'a1' }];
+      mockService.listAllowances.mockResolvedValue(allowances);
+
+      const result = await controller.listAllowances('abc', user as any);
+
+      expect(mockService.listAllowances).toHaveBeenCalledWith('abc', user);
+      expect(result).toEqual(allowances);
+    });
+  });
+
+  describe('updateAllowance', () => {
+    it('delegates to service.updateAllowance with the employee id, allowance id, dto, and current user', async () => {
+      const dto = { amount: 200000 };
+      const updated = { id: 'a1', ...dto };
+      mockService.updateAllowance.mockResolvedValue(updated);
+
+      const result = await controller.updateAllowance(
+        'abc',
+        'a1',
+        dto as any,
+        user as any,
+      );
+
+      expect(mockService.updateAllowance).toHaveBeenCalledWith(
+        'abc',
+        'a1',
+        dto,
+        user,
+      );
+      expect(result).toEqual(updated);
+    });
+  });
+
+  describe('removeAllowance', () => {
+    it('delegates to service.removeAllowance with the employee id, allowance id, and current user', async () => {
+      mockService.removeAllowance.mockResolvedValue(undefined);
+
+      await controller.removeAllowance('abc', 'a1', user as any);
+
+      expect(mockService.removeAllowance).toHaveBeenCalledWith(
+        'abc',
+        'a1',
+        user,
+      );
     });
   });
 });

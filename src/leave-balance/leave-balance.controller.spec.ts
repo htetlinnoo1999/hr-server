@@ -5,6 +5,7 @@ import { LeaveBalanceService } from './leave-balance.service.ts';
 
 const mockService = {
   create: jest.fn<any>(),
+  bulkCreate: jest.fn<any>(),
   findAll: jest.fn<any>(),
   findOne: jest.fn<any>(),
   update: jest.fn<any>(),
@@ -45,6 +46,26 @@ describe('LeaveBalanceController', () => {
       const result = await controller.create(dto as any, user as any);
 
       expect(mockService.create).toHaveBeenCalledWith(dto, user);
+      expect(result).toEqual(created);
+    });
+  });
+
+  describe('bulkCreate', () => {
+    it('delegates to service.bulkCreate with the provided dto and current user', async () => {
+      const dto = {
+        employeeId: 'emp1',
+        year: 2026,
+        balances: [
+          { leaveTypeId: 'lt-sick', totalDays: 30 },
+          { leaveTypeId: 'lt-annual', totalDays: 10 },
+        ],
+      };
+      const created = { created: 2, skipped: 0, data: [] };
+      mockService.bulkCreate.mockResolvedValue(created);
+
+      const result = await controller.bulkCreate(dto as any, user as any);
+
+      expect(mockService.bulkCreate).toHaveBeenCalledWith(dto, user);
       expect(result).toEqual(created);
     });
   });
